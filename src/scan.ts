@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { chromium, type Browser } from "playwright";
 import { runConsentSession } from "./consent.js";
 import { bounded } from "./bounded.js";
+import { applyIdentity, visitorContextOptions, visitorIdentity, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
 import { BUILT_IN_RULES } from "./rules.js";
 import {
@@ -33,12 +34,19 @@ export class PageUnresponsiveError extends Error {
   }
 }
 
+function describeStatus(status: number): string {
+  if (status === 404 || status === 410) return `The page was not found (HTTP ${status}). Check the URL.`;
+  if (status === 401 || status === 403 || status === 429) {
+    return `The site refused the automated browser (HTTP ${status}, usually bot protection or rate limiting). No reliable measurement is possible.`;
+  }
+  if (status >= 500) return `The server answered with an error (HTTP ${status}). Try again later.`;
+  return `The page answered HTTP ${status}, so it shows an error page and no reliable measurement is possible.`;
+}
+
 /** The page answered with an error status, so any measurement would describe the error page. */
 export class PageNotMeasurableError extends Error {
   constructor(public readonly status: number) {
-    super(
-      `The page answered HTTP ${status}. This is often bot protection or an error page, so no reliable measurement is possible.`,
-    );
+    super(describeStatus(status));
     this.name = "PageNotMeasurableError";
   }
 }
@@ -80,7 +88,20 @@ export async function checkLink(
 
 const DEFAULTS = { settleMs: 3000, timeoutMs: 30000, bannerWaitMs: 4000 };
 
-type Baseline = Pick<ScanResult, "finalUrl" | "requests" | "cookies" | "legal"> & { lang: string };
+type Baseline = Pick<ScanResult, "finalUrl" | "requests" | "cookies" | "legal"> & { lang: string; consentWall: boolean };
+
+/**
+ * Some sites answer a first visit with a redirect to a separate consent page (a "consent wall",
+ * e.g. /consent-management/ or consent.example.com). Measured naively, that page lacks the site's
+ * footer and would produce false "no imprint" findings.
+ */
+export function isConsentWallRedirect(requested: string, final: string): boolean {
+  const a = new URL(requested);
+  const b = new URL(final);
+  if (a.host === b.host && a.pathname === b.pathname) return false;
+  return /(^|[.-])(consent|cookie-?consent|cookiewall|privacy-?gate)([.-]|$)/i.test(b.hostname) ||
+    /\/(consent|consent-management|cookie-?consent|cookiewall|cookie-wall|privacy-?gate)(\/|$)/i.test(b.pathname);
+}
 
 /** Visit the page without touching any banner: this is the "before consent" state. */
 async function runBaseline(
@@ -90,11 +111,13 @@ async function runBaseline(
   settleMs: number,
   firstParty: string[],
   screenshotDir?: string,
+  identity?: VisitorIdentity,
 ): Promise<Baseline> {
   // A fresh context has no cookies or storage: it behaves like a first-time visitor.
-  const context = await browser.newContext({ locale: "de-DE" });
+  const context = await browser.newContext(visitorContextOptions(identity));
   try {
     const page = await context.newPage();
+    await applyIdentity(page, identity);
     page.setDefaultTimeout(Math.min(timeoutMs, 10000));
     const rawRequests: { url: string; resourceType: string }[] = [];
     page.on("request", (req) => rawRequests.push({ url: req.url(), resourceType: req.resourceType() }));
@@ -112,11 +135,20 @@ async function runBaseline(
 
     const finalUrl = page.url();
     const pageHost = new URL(finalUrl).hostname;
+    const consentWall = isConsentWallRedirect(url, finalUrl);
 
     const anchors: RawAnchor[] = await bounded(page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).map((a) => ({
         href: a.href,
-        text: (a.innerText || a.getAttribute("aria-label") || a.title || "").trim().slice(0, 120),
+        // innerText is empty for footers that render lazily (content-visibility); a link that takes up
+        // space is visible to visitors, so its textContent counts. A link with no box stays unlabeled.
+        text: (
+          a.innerText ||
+          (a.getBoundingClientRect().height > 0 ? (a.textContent || "").replace(/\s+/g, " ") : "") ||
+          a.getAttribute("aria-label") ||
+          a.title ||
+          ""
+        ).trim().slice(0, 120),
         inFooter:
           a.closest("footer, [role='contentinfo'], [id*='footer' i], [class*='footer' i]") !== null ||
           a.getBoundingClientRect().top + window.scrollY > document.documentElement.scrollHeight * 0.75,
@@ -138,6 +170,7 @@ async function runBaseline(
       cookies: classifyCookies(await context.cookies(), pageHost, firstParty),
       legal,
       lang,
+      consentWall,
     };
   } finally {
     await context.close();
@@ -157,9 +190,14 @@ function mergeBanner(a?: ConsentBanner, b?: ConsentBanner): ConsentBanner {
 }
 
 export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<ScanResult> {
-  const url = new URL(rawUrl);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`"${rawUrl}" is not a valid URL. Include the scheme, e.g. https://example.com.`);
+  }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`Only http(s) URLs are supported, got "${url.protocol}"`);
+    throw new Error(`Only http and https URLs can be scanned, got "${url.protocol}".`);
   }
   const settleMs = options.settleMs ?? DEFAULTS.settleMs;
   const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
@@ -175,17 +213,29 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
       throw explainLaunchError(err);
     });
   try {
-    const sessionOpts = { timeoutMs, settleMs, bannerWaitMs, firstParty, screenshotDir: options.screenshotDir };
+    const identity = await bounded(visitorIdentity(browser), 10000, () => undefined);
+    const sessionOpts = { timeoutMs, settleMs, bannerWaitMs, firstParty, screenshotDir: options.screenshotDir, identity };
     // Three independent visits run in parallel; each has its own cookie jar.
     // Hard stop: whatever a page does, a scan must end (it runs unattended in CI).
     const deadlineMs = timeoutMs + bannerWaitMs + 2 * settleMs + 45000;
-    const [base, reject, accept] = await bounded(Promise.all([
-      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir),
+    const stopped = (ms: number) => () => {
+      throw new Error(`The scan did not finish within ${Math.round(ms / 1000)} s and was stopped. The page may be blocking the browser.`);
+    };
+    let [base, reject, accept] = await bounded(Promise.all([
+      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity),
       clickTest ? runConsentSession(browser, url.href, "reject", sessionOpts) : undefined,
       clickTest ? runConsentSession(browser, url.href, "accept", sessionOpts) : undefined,
-    ]), deadlineMs, () => {
-      throw new Error(`The scan did not finish within ${Math.round(deadlineMs / 1000)} s and was stopped. The page may be blocking the browser.`);
-    });
+    ]), deadlineMs, stopped(deadlineMs));
+
+    // Banners can appear late. When one visit saw the banner and the other did not, the other is
+    // repeated once with a longer wait, so a click is not silently left untested.
+    const retryMs = timeoutMs + 2 * bannerWaitMs + 2 * settleMs + 30000;
+    const retry = { ...sessionOpts, bannerWaitMs: bannerWaitMs * 2 };
+    if (reject && accept && accept.banner.detected && !reject.banner.detected) {
+      reject = await bounded(runConsentSession(browser, url.href, "reject", retry), retryMs, stopped(retryMs));
+    } else if (reject && accept && reject.banner.detected && !accept.banner.detected) {
+      accept = await bounded(runConsentSession(browser, url.href, "accept", retry), retryMs, stopped(retryMs));
+    }
 
     let consent: ConsentTest | undefined;
     if (clickTest) {
@@ -200,11 +250,23 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     const looksGerman = base.lang.toLowerCase().startsWith("de") || /\.(de|at|ch)$/.test(host);
     const imprintCheck: ImprintMode =
       imprintMode === "never" ? "off" : imprintMode === "always" || looksGerman ? "check" : "skipped-auto";
+    const wall = base.consentWall
+      ? [
+          {
+            id: "consent-wall-page",
+            severity: "info" as const,
+            message:
+              "The site redirected the first visit to a separate consent page. consentprobe measured that page, not the site behind it: imprint and privacy links are not checked, and a full-page consent choice is not clicked.",
+            evidence: [base.finalUrl],
+          },
+        ]
+      : [];
     const findings = [
       ...findingsForRequests(base.requests, rules),
       ...findingsForCookies(base.cookies),
-      ...findingsForLegal(base.legal, imprintCheck),
-      ...(consent ? findingsForConsent(consent, base.requests, rules) : []),
+      ...wall,
+      ...(base.consentWall ? [] : findingsForLegal(base.legal, imprintCheck, looksGerman || imprintMode === "always")),
+      ...(consent && !(base.consentWall && !consent.banner.detected) ? findingsForConsent(consent, base.requests, rules) : []),
     ];
     const count = (s: "error" | "warn" | "info") => findings.filter((f) => f.severity === s).length;
 

@@ -93,6 +93,35 @@ describe("scan (real browser)", () => {
     expect(r.summary.error).toBe(0);
   }, 40000);
 
+  it("reads legal links in a footer that renders only when scrolled into view", async () => {
+    const r = await scan(`${fx.origin}/lazy-footer`, opts());
+    expect(r.legal.imprint).toMatchObject({ found: true, status: 200 });
+    expect(r.legal.privacy).toMatchObject({ found: true, status: 200 });
+    expect(ids(r)).not.toContain("imprint-link-missing");
+  });
+
+  it("does not judge legal links on a consent wall the site redirected to", async () => {
+    const r = await scan(`${fx.origin}/wall`, { ...opts(), clickTest: true, bannerWaitMs: 800 });
+    expect(r.finalUrl).toMatch(/\/consent-management\/$/);
+    expect(r.findings.find((f) => f.id === "consent-wall-page")?.severity).toBe("info");
+    expect(ids(r)).not.toContain("imprint-link-missing");
+    expect(ids(r)).not.toContain("privacy-link-missing");
+    expect(ids(r)).not.toContain("no-consent-banner-detected");
+  });
+
+  it("recognizes consent-wall redirects by host or path only", async () => {
+    const { isConsentWallRedirect } = await import("../src/scan.js");
+    expect(isConsentWallRedirect("https://web.example/", "https://web.example/consent-management/")).toBe(true);
+    expect(isConsentWallRedirect("https://news.example/", "https://consent.news.example/?ref=x")).toBe(true);
+    expect(isConsentWallRedirect("https://shop.example/", "https://shop.example/de/")).toBe(false);
+    expect(isConsentWallRedirect("https://shop.example/", "https://shop.example/consent-tips-for-shops")).toBe(false);
+    expect(isConsentWallRedirect("https://a.example/consent/", "https://a.example/consent/")).toBe(false);
+  });
+
+  it("explains an invalid URL", async () => {
+    await expect(scan("not a url")).rejects.toThrow(/not a valid URL/);
+  });
+
   it("rejects non-http URLs", async () => {
     await expect(scan("file:///etc/passwd")).rejects.toThrow(/http/);
   });

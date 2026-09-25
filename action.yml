@@ -48,9 +48,15 @@ runs:
         args=("$CP_URL" --format md --out "$CP_REPORT" --fail-on "$CP_FAIL_ON" --imprint "$CP_IMPRINT")
         if [ -n "$CP_FIRST_PARTY" ]; then args+=(--first-party "$CP_FIRST_PARTY"); fi
         rm -f "$CP_REPORT"
+        err="$RUNNER_TEMP/consentprobe-stderr.txt"
         set +e
-        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}"
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}" 2> "$err"
         code=$?
         set -e
-        if [ -f "$CP_REPORT" ]; then cat "$CP_REPORT" >> "$GITHUB_STEP_SUMMARY"; fi
+        cat "$err" >&2
+        if [ -f "$CP_REPORT" ]; then
+          cat "$CP_REPORT" >> "$GITHUB_STEP_SUMMARY"
+        elif [ -s "$err" ]; then
+          { echo "### consentprobe could not measure the page"; echo; echo '```'; cat "$err"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        fi
         exit $code

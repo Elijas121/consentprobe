@@ -30,8 +30,8 @@ function bannerLine(r: ScanResult, esc: (s: string) => string = (s) => s): strin
   if (!c.banner.detected && c.banner.incomplete) return "Consent banner: search incomplete (parts of the page did not respond)";
   if (!c.banner.detected && c.banner.overlayHint) return "Consent banner: cookie overlay visible, controls not automatable";
   if (!c.banner.detected) return "Consent banner: not recognized";
-  const ctl = (s?: { control?: { label: string } }, found = false) =>
-    found ? (s?.control ? `found ("${esc(s.control.label)}")` : "found") : "not found";
+  const ctl = (s?: { control?: { label: string }; clicked?: boolean }, found = false) =>
+    !found ? "not found" : s?.control ? `found ("${esc(s.control.label)}")${s.clicked ? "" : ", click failed"}` : "found, not tested";
   return `Consent banner: recognized${c.banner.cmp ? ` (${esc(c.banner.cmp)})` : ""} | reject: ${ctl(c.reject, c.banner.rejectFound)} | accept: ${ctl(c.accept, c.banner.acceptFound)}`;
 }
 
@@ -40,7 +40,7 @@ export function formatText(r: ScanResult): string {
     `consentprobe ${r.tool.version}  ${r.finalUrl}`,
     phaseLine(r),
     bannerLine(r),
-    `${r.summary.error} error, ${r.summary.warn} warn, ${r.summary.info} info | ${r.summary.thirdPartyHosts} third-party host(s), ${r.requests.length} request(s), ${r.cookies.length} cookie(s)`,
+    `${r.summary.error} error, ${r.summary.warn} warn, ${r.summary.info} info | before consent: ${r.summary.thirdPartyHosts} third-party host(s), ${r.requests.length} request(s), ${r.cookies.length} cookie(s)`,
     "",
   ];
   if (r.findings.length === 0) lines.push("No findings.");
@@ -61,7 +61,7 @@ export function formatMarkdown(r: ScanResult): string {
     `- ${phaseLine(r)}`,
     `- ${bannerLine(r, escapeMarkdown)}`,
     `- Result: ${r.summary.error} error, ${r.summary.warn} warn, ${r.summary.info} info`,
-    `- Third-party hosts: ${r.summary.thirdPartyHosts}`,
+    `- Before consent: ${r.summary.thirdPartyHosts} third-party host(s), ${r.requests.length} request(s), ${r.cookies.length} cookie(s)`,
     "",
   ];
   for (const sev of ORDER) {

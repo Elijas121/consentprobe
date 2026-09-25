@@ -164,11 +164,47 @@ describe("consent click test (real browser)", () => {
   it("still finds and clicks a banner when an unrelated frame never loads, without long delays", async () => {
     const started = Date.now();
     const r = await scan(`${fx.origin}/stalled-frame-with-banner`, { ...opts(), timeoutMs: 15000 });
-    expect(Date.now() - started).toBeLessThan(40000);
+    // About 29 s by construction (bounded load wait, network idle before and after the click). The
+    // bound only has to catch the old 20-minute hang; 40 s left too little room on a busy machine.
+    expect(Date.now() - started).toBeLessThan(50000);
     expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
     expect(r.consent?.reject?.clicked).toBe(true);
     expect(r.consent?.banner.incomplete).toBeUndefined();
   }, 60000);
+
+  it("sees the banner that a site hides from headless browsers", async () => {
+    const r = await scan(`${fx.origin}/banner-hidden-from-bots`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+    // The bot view loads the tracker at once; a regular visitor's first page does not.
+    expect(r.requests.some((q) => q.url.endsWith("/analytics.js"))).toBe(false);
+  });
+
+  it("finds banner controls built from links without href", async () => {
+    const r = await scan(`${fx.origin}/banner-plain-controls`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Nur notwendige Cookies");
+    expect(r.consent?.accept?.control?.label).toBe("Geht klar");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+    expect(find(r, "third-party-after-reject:test-analytics")).toBeUndefined();
+    expect(find(r, "consent-unlocks")?.message).toContain("Test Analytics");
+  });
+
+  it("never clicks control-like words that are plain text in an overlay", async () => {
+    const r = await scan(`${fx.origin}/overlay-text-not-control`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });
+    expect(r.consent?.reject?.clicked).toBe(false);
+    expect(r.consent?.accept?.clicked).toBe(false);
+  });
+
+  it("repeats a visit that missed a late banner, so both clicks are tested", async () => {
+    const r = await scan(`${fx.origin}/banner-sometimes-late`, { ...opts(), bannerWaitMs: 1000 });
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+    expect(find(r, "consent-reject-not-tested")).toBeUndefined();
+    expect(find(r, "consent-accept-not-tested")).toBeUndefined();
+  });
 
   it("skips the click visits when clickTest is off", async () => {
     const r = await scan(`${fx.origin}/banner-good`, { ...opts(), clickTest: false });

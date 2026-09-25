@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { parseArgs } from "node:util";
+import { normalizeUrlInput, parseMs, parseRules } from "./input.js";
 import { formatMarkdown, formatText } from "./report.js";
 import { scan } from "./scan.js";
 import { VERSION } from "./version.js";
-import type { ScanOptions, Severity, TrackerRule } from "./types.js";
+import type { ScanOptions, Severity } from "./types.js";
 
 const HELP = `consentprobe ${VERSION}
-Measure what a website does before a visitor answers the cookie banner.
+Measure what a website does before and after a visitor answers the cookie banner.
 
-Usage: consentprobe <url> [options]
+Usage: consentprobe <url> [options]      (https:// is added when the URL has no scheme)
 
 Options:
   --format <text|json|md>   Output format (default: text)
@@ -22,7 +24,9 @@ Options:
   --banner-wait <ms>        How long to wait for a banner to appear (default: 4000)
   --screenshots <dir>       Save evidence screenshots before/after each banner click
   --first-party <domain>    Extra domain of the site operator, e.g. its asset CDN (repeatable)
-  --imprint <auto|always|never>  Imprint check: auto = only German-language sites (default: auto)
+  --imprint <auto|always|never>  German rules: auto = German-language or .de/.at/.ch sites;
+                            always = force them (imprint check, missing privacy link is an error);
+                            never = no imprint check (default: auto)
   --rules <file>            JSON file with extra tracker rules
   -h, --help                Show this help
   -v, --version             Show the version
@@ -65,8 +69,14 @@ async function main(): Promise<void> {
 
   if (values.help) return void process.stdout.write(`${HELP}\n`);
   if (values.version) return void process.stdout.write(`${VERSION}\n`);
-  const [url] = positionals;
-  if (!url) return fail("missing <url>. Try --help.");
+  const [input] = positionals;
+  if (!input) return fail("missing <url>. Try --help.");
+  let url: string;
+  try {
+    url = normalizeUrlInput(input);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
 
   const format = values.format;
   if (format !== "text" && format !== "json" && format !== "md") return fail(`unknown --format "${format}"`);
@@ -78,16 +88,25 @@ async function main(): Promise<void> {
   const imprint = values.imprint;
   if (imprint !== "auto" && imprint !== "always" && imprint !== "never") return fail(`unknown --imprint "${imprint}"`);
   const options: ScanOptions = { browser, imprint, firstParty: values["first-party"] ?? [], screenshotDir: values.screenshots };
-  if (values.settle !== undefined) options.settleMs = Number(values.settle);
-  if (values.timeout !== undefined) options.timeoutMs = Number(values.timeout);
-  if (values["banner-wait"] !== undefined) options.bannerWaitMs = Number(values["banner-wait"]);
+  try {
+    if (values.settle !== undefined) options.settleMs = parseMs("settle", values.settle, 0);
+    if (values.timeout !== undefined) options.timeoutMs = parseMs("timeout", values.timeout, 1000);
+    if (values["banner-wait"] !== undefined) options.bannerWaitMs = parseMs("banner-wait", values["banner-wait"], 0);
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : String(err));
+  }
   if (values["no-click-test"]) options.clickTest = false;
   if (values.rules) {
+    let json: string;
     try {
-      const { readFile } = await import("node:fs/promises");
-      options.extraRules = JSON.parse(await readFile(values.rules, "utf8")) as TrackerRule[];
+      json = await readFile(values.rules, "utf8");
     } catch (err) {
-      return fail(`cannot read --rules file: ${err instanceof Error ? err.message : String(err)}`);
+      return fail(`cannot read --rules file "${values.rules}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      options.extraRules = parseRules(json);
+    } catch (err) {
+      return fail(`--rules file "${values.rules}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -99,8 +118,14 @@ async function main(): Promise<void> {
   }
 
   const output = format === "json" ? JSON.stringify(result, null, 2) : format === "md" ? formatMarkdown(result) : formatText(result);
-  if (values.out) await writeFile(values.out, `${output}\n`);
-  else process.stdout.write(`${output}\n`);
+  if (values.out) {
+    try {
+      await mkdir(dirname(values.out), { recursive: true });
+      await writeFile(values.out, `${output}\n`);
+    } catch (err) {
+      return fail(`cannot write --out file "${values.out}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else process.stdout.write(`${output}\n`);
 
   const threshold: Severity[] = failOn === "error" ? ["error"] : failOn === "warn" ? ["error", "warn"] : [];
   if (result.findings.some((f) => threshold.includes(f.severity))) process.exitCode = 1;

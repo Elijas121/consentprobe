@@ -60,6 +60,13 @@ export async function startFixtures(): Promise<Fixtures> {
       // frame wait forever; this is what made real scans hang.
       return;
     }
+    if (req.url?.startsWith("/bot-check")) {
+      // A consent platform frame that answers headless browsers differently (it sees only its own headers).
+      const bot = /HeadlessChrome/.test(`${req.headers["user-agent"] ?? ""} ${req.headers["sec-ch-ua"] ?? ""}`);
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(bot ? "<script>parent.postMessage('consentprobe-fixture-bot','*')</script>" : "<p>ok</p>");
+      return;
+    }
     if (req.url?.startsWith("/analytics.js")) {
       res.writeHead(200, { "content-type": "text/javascript" });
       res.end("/* fake analytics */");
@@ -71,6 +78,7 @@ export async function startFixtures(): Promise<Fixtures> {
   const thirdPort = await listen(third, "127.0.0.1");
   const thirdOrigin = `http://127.0.0.1:${thirdPort}`;
 
+  let lateVisits = 0;
   const first = createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
     const html = (status: number, body: string, headers: Record<string, string | string[]> = {}) => {
@@ -143,6 +151,42 @@ export async function startFixtures(): Promise<Fixtures> {
         return html(200, page(`<h1>Frame</h1>${FOOTER}<iframe src="${thirdOrigin}/stall" title="widget"></iframe>`));
       case "/stalled-frame-with-banner":
         return html(200, bannerPage("good", thirdOrigin).replace("</main>", `<iframe src="${thirdOrigin}/stall" title="widget"></iframe></main>`));
+      case "/banner-hidden-from-bots": {
+        // Like several large sites: a headless browser gets no banner, and tracking starts at once.
+        // The server looks at the user agent and client hints, the page script at navigator.userAgentData.
+        const agent = `${req.headers["user-agent"] ?? ""} ${req.headers["sec-ch-ua"] ?? ""}`;
+        if (/HeadlessChrome/.test(agent)) {
+          return html(200, page(`<h1>Bot view</h1>${FOOTER}`, `<script src="${thirdOrigin}/analytics.js"></script>`));
+        }
+        const hideForBots = `<iframe src="${thirdOrigin}/bot-check" title="cmp" style="width:1px;height:1px;border:0"></iframe><script>function botView(){var b=document.getElementById('banner');if(!b)return;b.remove();var s=document.createElement('script');s.src='${thirdOrigin}/analytics.js';document.head.appendChild(s);}if(((navigator.userAgentData||{}).brands||[]).some(function(b){return /HeadlessChrome/.test(b.brand)}))botView();addEventListener('message',function(e){if(e.data==='consentprobe-fixture-bot')botView();});</script>`;
+        return html(200, bannerPage("good", thirdOrigin).replace("</main>", `${hideForBots}</main>`));
+      }
+      case "/banner-plain-controls":
+        // Controls built from links without href: no button or link role (seen on a large comparison site).
+        return html(200, page(`<h1>Plain controls</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Mit einem Klick auf „Geht klar“ erlauben Sie Cookies für Statistik und Werbung. Mit „Nur notwendige Cookies“ speichern wir nur technisch notwendige Cookies.</p><a class="rej">Nur notwendige Cookies</a> <a class="acc">Geht klar</a></div><script>var banner=document.getElementById('banner');function load(){var s=document.createElement('script');s.src='${thirdOrigin}/analytics.js';document.head.appendChild(s);}document.querySelector('.acc').addEventListener('click',function(){document.cookie='_ga=GA1.2.1; path=/';load();banner.remove();});document.querySelector('.rej').addEventListener('click',function(){banner.remove();});</script>`));
+      case "/overlay-text-not-control":
+        // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
+        return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));
+      case "/lazy-footer":
+        // The footer renders only when scrolled into view (content-visibility), so innerText is empty.
+        // The imprint URL does not say "impressum" (seen on a large price-comparison site), so only
+        // the link text identifies it.
+        return html(200, page(`<h1>Lazy footer</h1><div style="height:6000px"></div><footer style="content-visibility:auto;contain-intrinsic-size:auto 700px"><nav><a href="/legal/agb">Impressum / AGB</a> <a href="/datenschutz">Datenschutz</a></nav></footer>`));
+      case "/legal/agb":
+        return html(200, page(`<h1>Impressum und AGB</h1>`));
+      case "/wall":
+        // A first visit is redirected to a separate full-page consent choice (a "consent wall").
+        return html(302, "", { location: "/consent-management/" });
+      case "/consent-management/":
+        return html(200, page(`<h1>Wir finanzieren uns über Werbung</h1><p>Abo ohne Werbung oder mit Werbung und Tracking weiter.</p><a href="/abo">Zum Abo</a> <button type="button">Akzeptieren und weiter</button>`));
+      case "/banner-sometimes-late": {
+        // Every second visit shows the banner only after 1.5 s: parallel visits can disagree.
+        lateVisits += 1;
+        const delay = lateVisits % 2 === 0 ? 1500 : 0;
+        return html(200, bannerPage("good", thirdOrigin)
+          .replace('id="banner" style="', 'id="banner" style="display:none;')
+          .replace("</main>", `<script>setTimeout(function(){document.getElementById('banner').style.display='block';},${delay});</script></main>`));
+      }
       case "/blocked":
         return html(403, page("Da ist etwas schiefgelaufen"));
       case "/impressum":

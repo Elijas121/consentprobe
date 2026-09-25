@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Browser, Frame, Locator, Page } from "playwright";
 import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
+import { applyIdentity, visitorContextOptions, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
 
@@ -41,6 +42,8 @@ export function normalizeLabel(label: string): string {
  */
 const REJECT_STRICT: RegExp[] = [
   /^(alles?(\s+cookies)?\s+)?(ablehnen|verweigern)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
+  /^(alle\s+)?einwilligung(en)?\s+(ablehnen|verweigern)$/,
+  /^(alle\s+)?(optionalen?|nicht\s+notwendigen?|zusätzlichen?)\s+cookies\s+ablehnen$/,
   /^(nur\s+)?(technisch\s+)?(notwendige|erforderliche|essenzielle|essentielle)(\s+cookies)?(\s+(akzeptieren|zulassen|erlauben|verwenden|speichern))?$/,
   /^(weiter\s+)?ohne\s+(zustimmung|einwilligung|akzeptieren)(\s+(fortfahren|weiter|weiterlesen))?$/,
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
@@ -48,10 +51,11 @@ const REJECT_STRICT: RegExp[] = [
   /^continue\s+without\s+(accepting|consent)$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
-  /^(alles?(\s+cookies)?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
+  /^(alle[ns]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
   /^(ja\s+)?(ich\s+)?stimme\s+zu(\s+und\s+akzeptiere\s+alle(\s+cookies)?)?$/,
   /^ich\s+akzeptiere(\s+alle)?$/,
   /^(ich\s+bin\s+)?einverstanden$/,
+  /^geht\s+klar$/,
   /^(accept|allow|agree)(\s+all)?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
   /^i\s+(agree|accept)$/,
 ];
@@ -64,7 +68,7 @@ const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|acce
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without/i;
+  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -125,6 +129,48 @@ async function bySelector(page: Page, selector: string, q: QueryBudget): Promise
   return undefined;
 }
 
+const PLAIN_MARK = "data-consentprobe-control";
+
+/**
+ * Some banners build their controls from plain elements (an <a> without href, a <div> with a click
+ * handler). They have no button or link role, so the role search misses them. This marks plain
+ * clickable elements inside an overlay whose whole text is short and passes the candidate filter;
+ * the strict label check still decides afterwards. Buttons and real links are left to the role search.
+ */
+function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
+  const candidate = new RegExp(args.source, args.flags);
+  const inOverlay = (el: Element): boolean => {
+    for (let n: Element | null = el; n; n = n.parentElement) {
+      const position = getComputedStyle(n).position;
+      if (position === "fixed" || position === "sticky") return true;
+      const role = n.getAttribute("role");
+      if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
+    }
+    return false;
+  };
+  let marked = 0;
+  for (const el of Array.from(document.querySelectorAll("body *"))) {
+    const role = el.getAttribute("role");
+    if (el.tagName === "BUTTON" || role === "button" || role === "link" || (el.tagName === "A" && el.hasAttribute("href"))) continue;
+    // Cheap text filter first; style and layout queries only for the few elements that pass.
+    const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!raw || raw.length > args.max || !candidate.test(raw)) continue;
+    if (el.closest("button, a[href], [role='button'], [role='link']")) continue;
+    const clickable = el.tagName === "A" || el.hasAttribute("onclick") || el.hasAttribute("tabindex") || getComputedStyle(el).cursor === "pointer";
+    if (!clickable) continue;
+    // The outermost clickable element carries the label; its children inherit cursor:pointer.
+    const parent = el.parentElement;
+    if (parent && parent !== document.body && (parent.tagName === "A" || parent.hasAttribute("onclick") || getComputedStyle(parent).cursor === "pointer")) continue;
+    const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > args.max || !candidate.test(text)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0 || !inOverlay(el)) continue;
+    el.setAttribute(args.mark, "");
+    marked += 1;
+  }
+  return marked;
+}
+
 async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
   const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
   const candidates = CANDIDATE_LABEL;
@@ -143,6 +189,21 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         else if (isAcceptLabel(label)) out.accept ??= found;
         else if (isRejectLike(label)) out.rejectLike ??= label;
       }
+    }
+    if (out.reject && out.accept) continue;
+    const args = { source: candidates.source, flags: candidates.flags, mark: PLAIN_MARK, max: MAX_LABEL };
+    if ((await ask(() => frame.evaluate(markPlainControls, args), q, 0, frame)) === 0) continue;
+    const plain = frame.locator(`[${PLAIN_MARK}]`);
+    const count = Math.min(await ask(() => plain.count(), q, 0, frame), 15);
+    for (let i = 0; i < count; i++) {
+      const locator = plain.nth(i);
+      if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
+      const label = await labelOf(locator, q, frame);
+      if (!label || label.length > MAX_LABEL) continue;
+      const found: Found = { locator, control: { label, method: "text" } };
+      if (isRejectLabel(label)) out.reject ??= found;
+      else if (isAcceptLabel(label)) out.accept ??= found;
+      else if (isRejectLike(label)) out.rejectLike ??= label;
     }
   }
   return out;
@@ -220,6 +281,7 @@ export interface SessionOptions {
   bannerWaitMs: number;
   firstParty: string[];
   screenshotDir?: string;
+  identity?: VisitorIdentity;
 }
 
 async function shot(page: Page, dir: string | undefined, name: string): Promise<void> {
@@ -234,7 +296,7 @@ export async function runConsentSession(
   action: "reject" | "accept",
   o: SessionOptions,
 ): Promise<{ banner: ConsentBanner; session: ConsentSession }> {
-  const context = await browser.newContext({ locale: "de-DE" });
+  const context = await browser.newContext(visitorContextOptions(o.identity));
   try {
     const raw: { url: string; resourceType: string }[] = [];
     // The page reports the exact moment of the physical press (in any frame, before the site's own
@@ -250,6 +312,7 @@ export async function runConsentSession(
       for (const type of ["pointerdown", "mousedown"]) document.addEventListener(type, mark, { capture: true });
     });
     const page = await context.newPage();
+    await applyIdentity(page, o.identity);
     const q: QueryBudget = newBudget();
     page.setDefaultTimeout(Math.min(o.timeoutMs, 10000));
     page.on("request", (req) => raw.push({ url: req.url(), resourceType: req.resourceType() }));

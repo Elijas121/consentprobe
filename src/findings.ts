@@ -15,6 +15,7 @@ import type {
   Finding,
   LegalLink,
   RequestRecord,
+  Severity,
   TrackerRule,
 } from "./types.js";
 
@@ -45,21 +46,31 @@ export function findingsForRequests(
     }
   }
 
-  for (const { rule, urls, reqs } of byRule.values()) {
-    const beacons = reqs.filter((r) => r.consentSignal !== undefined);
-    const granted = beacons.filter((r) => !isDeniedPing(r));
-    const note =
-      beacons.length === 0
-        ? ""
-        : granted.length > 0
+  for (const { rule, reqs } of byRule.values()) {
+    // Google's Consent Mode "denied" pings are judged like after a reject: a separate, disputed warning.
+    const pings = reqs.filter(isDeniedPing);
+    const other = reqs.filter((r) => !isDeniedPing(r));
+    const granted = other.filter((r) => r.consentSignal !== undefined);
+    if (other.length > 0) {
+      const note =
+        granted.length > 0
           ? ` ${granted.length} request(s) signal consent as granted before the banner was answered (${uniq(granted.map((r) => r.consentSignal ?? "")).join(", ")}).`
-          : ` Its measurement requests carry ${describeConsentSignal("G100")}, i.e. Consent Mode is active and in "denied" state.`;
-    findings.push({
-      id: `third-party-before-consent:${rule.id}`,
-      severity: CATEGORY_SEVERITY[rule.category],
-      message: `${rule.name} (${rule.category}): ${urls.length} request(s) before any consent interaction. ${CATEGORY_HINT[rule.category]}${note}`,
-      evidence: uniq(reqs.map((r) => (r.consentSignal ? `${r.url} [gcs=${r.consentSignal}]` : r.url))).slice(0, MAX_EVIDENCE),
-    });
+          : "";
+      findings.push({
+        id: `third-party-before-consent:${rule.id}`,
+        severity: CATEGORY_SEVERITY[rule.category],
+        message: `${rule.name} (${rule.category}): ${other.length} request(s) before any consent interaction. ${CATEGORY_HINT[rule.category]}${note}`,
+        evidence: uniq(other.map((r) => (r.consentSignal ? `${r.url} [gcs=${r.consentSignal}]` : r.url))).slice(0, MAX_EVIDENCE),
+      });
+    }
+    if (pings.length > 0) {
+      findings.push({
+        id: `consent-mode-ping-before-consent:${rule.id}`,
+        severity: "warn",
+        message: `${rule.name}: ${pings.length} request(s) before any consent interaction carry ${describeConsentSignal("G100")}. These are Google's cookieless "denied" pings; they still send data such as the IP address to Google. Whether that is acceptable without consent is disputed; decide deliberately.`,
+        evidence: uniq(pings.map((r) => `${r.url} [gcs=G100]`)).slice(0, MAX_EVIDENCE),
+      });
+    }
   }
 
   if (unclassified.size > 0) {
@@ -101,7 +112,7 @@ export function findingsForCookies(cookies: CookieRecord[]): Finding[] {
     } else if (c.thirdParty) {
       thirdParty.push(label);
     } else {
-      other.push(c.expires === null ? `${label}, session` : `${label}, persistent`);
+      other.push(`${c.name} (${c.domain}, ${c.expires === null ? "session cookie" : "persistent"})`);
     }
   }
 
@@ -151,9 +162,14 @@ export function findingsForCookies(cookies: CookieRecord[]): Finding[] {
 /** "check" runs the imprint check, "skipped-auto" notes that auto mode skipped it, "off" says nothing. */
 export type ImprintMode = "check" | "skipped-auto" | "off";
 
+/**
+ * `germanRules` is true for German-language or .de/.at/.ch sites (or when forced). There a missing
+ * or broken privacy link is an error; elsewhere it is a warning, because the tool's rules are German.
+ */
 export function findingsForLegal(
   legal: { imprint: LegalLink; privacy: LegalLink },
   imprintMode: ImprintMode = "check",
+  germanRules = true,
 ): Finding[] {
   const findings: Finding[] = [];
   const checks = [
@@ -172,6 +188,7 @@ export function findingsForLegal(
 
   for (const { key, label, link } of checks) {
     if (key === "imprint" && !checkImprint) continue;
+    const hard: Severity = key === "privacy" && !germanRules ? "warn" : "error";
     if (!link.found && link.candidate) {
       findings.push({
         id: `${key}-link-uncertain`,
@@ -186,7 +203,7 @@ export function findingsForLegal(
     if (!link.found) {
       findings.push({
         id: `${key}-link-missing`,
-        severity: "error",
+        severity: hard,
         message: `No link to the ${label} found on this page.`,
         evidence: [],
       });
@@ -195,7 +212,7 @@ export function findingsForLegal(
     if (link.status !== undefined && link.status >= 400) {
       findings.push({
         id: `${key}-link-unreachable`,
-        severity: "error",
+        severity: hard,
         message: `The ${label} link does not resolve (HTTP ${link.status}).`,
         evidence: link.href ? [link.href] : [],
       });
@@ -339,6 +356,17 @@ export function findingsForConsent(
     });
   }
 
+  for (const [session, found] of [[reject, banner.rejectFound], [accept, banner.acceptFound]] as const) {
+    if (found && session && !session.control && !session.error) {
+      findings.push({
+        id: `consent-${session.action}-not-tested`,
+        severity: "info",
+        message: `The ${session.action} control was recognized in one visit but did not appear in the ${session.action} visit (it may render late), so ${session.action} was not tested.`,
+        evidence: [],
+      });
+    }
+  }
+
   for (const session of [reject, accept]) {
     if (session?.error) {
       findings.push({
@@ -382,6 +410,26 @@ export function findingsForConsent(
           evidence: uniq(pings.map((r) => `${r.url} [gcs=G100]`)).slice(0, MAX_EVIDENCE),
         });
       }
+    }
+
+    // Unknown hosts are not accused of tracking, but a host that appears only after the reject click is
+    // worth a look. Hosts already contacted before consent are covered by the baseline findings.
+    const baselineHosts = new Set(baseline.filter((r) => r.thirdParty).map((r) => r.host));
+    const newUnknown = new Map<string, number>();
+    for (const req of reject.requestsAfter) {
+      if (!req.thirdParty || baselineHosts.has(req.host) || matchRule(new URL(req.url), rules)) continue;
+      newUnknown.set(req.host, (newUnknown.get(req.host) ?? 0) + 1);
+    }
+    if (newUnknown.size > 0) {
+      findings.push({
+        id: "unclassified-third-party-after-reject",
+        severity: "info",
+        message: `${newUnknown.size} third-party host(s) that are not in the built-in list were contacted only after the reject control was clicked. Check what they are.`,
+        evidence: [...newUnknown.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, MAX_EVIDENCE * 2)
+          .map(([host, n]) => `${host} (${n})`),
+      });
     }
 
     const before = new Map(reject.cookiesBefore.map((c) => [`${c.name}|${c.domain}`, c.valueHash]));
