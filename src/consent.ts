@@ -112,7 +112,7 @@ interface Controls {
 async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<string> {
   const text = await ask(() => el.innerText({ timeout: 1000 }), q, "", frame);
   const aria = text ? "" : ((await ask(() => el.getAttribute("aria-label", { timeout: 1000 }), q, null, frame)) ?? "");
-  return (text || aria).replace(/\s+/g, " ").trim();
+  return (text || aria).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
 }
 
 async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
