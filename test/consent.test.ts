@@ -191,6 +191,18 @@ describe("consent click test (real browser)", () => {
     expect(find(r, "consent-unlocks")?.message).toContain("Test Analytics");
   });
 
+  it("finds the real controls next to category names and never takes a category name for a reject", async () => {
+    const r = await scan(`${fx.origin}/banner-category-list`, opts());
+    expect(r.consent?.reject?.control?.label).toBe("Accept Only Essential Cookies");
+    expect(r.consent?.accept?.control?.label).toBe("I Accept All");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+    const none = await scan(`${fx.origin}/banner-category-list-no-reject`, opts());
+    expect(none.consent?.banner).toMatchObject({ detected: true, rejectFound: false, acceptFound: true });
+    expect(none.consent?.reject?.control).toBeUndefined();
+    expect(find(none, "no-reject-control-on-first-layer")).toBeDefined();
+  });
+
   it("never clicks control-like words that are plain text in an overlay", async () => {
     const r = await scan(`${fx.origin}/overlay-text-not-control`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });

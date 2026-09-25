@@ -164,6 +164,13 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/banner-plain-controls":
         // Controls built from links without href: no button or link role (seen on a large comparison site).
         return html(200, page(`<h1>Plain controls</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Mit einem Klick auf „Geht klar“ erlauben Sie Cookies für Statistik und Werbung. Mit „Nur notwendige Cookies“ speichern wir nur technisch notwendige Cookies.</p><a class="rej">Nur notwendige Cookies</a> <a class="acc">Geht klar</a></div><script>var banner=document.getElementById('banner');function load(){var s=document.createElement('script');s.src='${thirdOrigin}/analytics.js';document.head.appendChild(s);}document.querySelector('.acc').addEventListener('click',function(){document.cookie='_ga=GA1.2.1; path=/';load();banner.remove();});document.querySelector('.rej').addEventListener('click',function(){banner.remove();});</script>`));
+      case "/banner-category-list":
+      case "/banner-category-list-no-reject": {
+        // A consent dialog that lists categories on the first layer: a checkbox label "Essential", an
+        // accordion header "Notwendige Cookies" and a switch "Necessary". None of them is a decision.
+        const reject = path === "/banner-category-list" ? `<button type="button" class="rej">Accept Only Essential Cookies</button>` : "";
+        return html(200, page(`<h1>Category list</h1>${FOOTER}<div id="banner" role="dialog" style="position:fixed;top:10%;left:25%;width:50%;background:#fff;padding:1rem"><p>We use cookies.</p><ul><li><label style="cursor:pointer"><input type="checkbox" checked disabled> <span style="cursor:pointer">Essential</span></label></li><li><button type="button" aria-expanded="false">Notwendige Cookies</button></li><li><span role="switch" aria-checked="true" tabindex="0" style="cursor:pointer">Necessary</span></li></ul><button type="button" class="save">Save Consent</button><button type="button" class="acc">I Accept All</button>${reject}</div><script>document.querySelectorAll('#banner .save, #banner .acc, #banner .rej').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      }
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));

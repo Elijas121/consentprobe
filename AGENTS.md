@@ -62,7 +62,7 @@ docs/VALIDATION.md  validation method, numbers and limits
 pnpm install
 pnpm exec playwright install chromium   # once
 pnpm typecheck
-pnpm test                               # 107 tests, about two minutes, real browser
+pnpm test                               # 109 tests, about two minutes, real browser
 pnpm build
 node dist/cli.js <url> --screenshots ../cp-runs/evidence
 scripts/scan-list.sh ../cp-runs/urls.txt ../cp-runs/out   # real-site regression, then read ../cp-runs/out/*.json
@@ -127,6 +127,8 @@ pnpm trap: a `pnpm-workspace.yaml` in a parent directory makes pnpm treat this r
 | Reject silently untested | only the accept visit saw the late banner | repeat the other visit once; report an untested click |
 | "No imprint" and "no privacy link" on a small business site | page-builder footer items were clickable headings without href (URL set by a script) | clickable elements with the exact standard label count as found; target reported as not verifiable (info) |
 | "Accept everything" not recognized | English wording unknown | pattern plus test |
+| A reject control "found" that was the label of a category checkbox ("Essential", "Notwendige Cookies", "Erforderliche Cookies"); the click failed, and the missing-reject warning was not raised | the strict reject pattern matches bare category names, and the plain-control search took a clickable `<label>` for a control | checkbox labels, switches, tabs and accordion headers never count as a decision; tests break both search paths on purpose |
+| "I Accept All" and "Accept Only Essential Cookies" not recognized | English wording unknown | patterns plus tests for mixed choices that must not match |
 | "Search incomplete" on several large sites during a regression run | five scans in parallel overloaded the machine; queries hit their time limit | run large-site regressions with `CP_PARALLEL=2`; the tool degrades to "incomplete", never to a false claim |
 
 Methods lesson: a ground truth from one neutral screenshot can be wrong. Two sample-3 disagreements were the tool being right (a banner that appeared after the screenshot; a banner hidden behind a location popup). Always check the click screenshots before blaming the tool, and report such corrections openly.
@@ -135,7 +137,7 @@ A theory that turned out wrong: a banner dialog looked like a marketing mock-up,
 
 ## Current status (2026-09-25)
 
-- Core scanner, click test, evidence screenshots, first-party option, imprint mode, demo: done and tested (107 tests, about two minutes, zero unhandled rejections). The suite passes on Node 20, 22 and 26; the packed tarball installs and runs from a clean folder.
+- Core scanner, click test, evidence screenshots, first-party option, imprint mode, demo: done and tested (109 tests, about two minutes, zero unhandled rejections). The suite passes on Node 20, 22 and 26; the packed tarball installs and runs from a clean folder.
 - Verified on real sites (names kept out of the repo on purpose): 71 small-business sites and 20 large German sites; see `docs/VALIDATION.md`.
 - **Validation:** 71 real sites in three samples, two of them judged blind, each scanned three times. See `docs/VALIDATION.md` for method, numbers and limits. Raw results with site names are kept out of the repo.
 - **Tracking after reject is verified on real sites:** three screenshot-checked cases (a HubSpot click pixel; Microsoft Clarity sending data after reject; Clarity loaded only after "Decline"). No site names in the repo.

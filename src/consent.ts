@@ -47,7 +47,7 @@ const REJECT_STRICT: RegExp[] = [
   /^(nur\s+)?(technisch\s+)?(notwendige|erforderliche|essenzielle|essentielle)(\s+cookies)?(\s+(akzeptieren|zulassen|erlauben|verwenden|speichern))?$/,
   /^(weiter\s+)?ohne\s+(zustimmung|einwilligung|akzeptieren)(\s+(fortfahren|weiter|weiterlesen))?$/,
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
-  /^(only\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
+  /^((accept|allow|use)\s+)?(only\s+)?(strictly\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
   /^continue\s+without\s+(accepting|consent)$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
@@ -57,7 +57,7 @@ const ACCEPT_STRICT: RegExp[] = [
   /^(ich\s+bin\s+)?einverstanden$/,
   /^geht\s+klar$/,
   /^(accept|allow|agree)(\s+(all|everything))?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
-  /^i\s+(agree|accept)$/,
+  /^i\s+(agree|accept)(\s+all)?(\s+cookies)?$/,
 ];
 /** Loose: anything that mentions rejecting. Reported, never clicked. */
 const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse/i;
@@ -91,6 +91,18 @@ const isOverlayElement = (el: Element): boolean => {
   }
   return false;
 };
+
+/**
+ * True for a part of a choice rather than a decision: the label of a category checkbox, a toggle or
+ * an accordion header. Consent lists name categories "Essential" or "Notwendige Cookies"; clicking
+ * such a name ticks a box or opens a section, it never rejects anything.
+ */
+const isChoicePart = (el: Element): boolean =>
+  el.closest("label, summary, [role='checkbox'], [role='switch'], [role='radio'], [role='tab']") !== null ||
+  el.hasAttribute("aria-expanded") ||
+  el.hasAttribute("aria-checked") ||
+  el.hasAttribute("aria-pressed") ||
+  el.querySelector("input, select, textarea") !== null;
 
 async function inOverlay(locator: Locator, frame: Frame, page: Page, q: QueryBudget): Promise<boolean> {
   if (await ask(() => locator.evaluate(isOverlayElement), q, false, frame)) return true;
@@ -156,6 +168,8 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
     const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
     if (!raw || raw.length > args.max || !candidate.test(raw)) continue;
     if (el.closest("button, a[href], [role='button'], [role='link']")) continue;
+    // A category name in a consent list labels a checkbox or opens a section (see isChoicePart).
+    if (el.closest("label, summary, [role='checkbox'], [role='switch'], [role='radio'], [role='tab']") || el.querySelector("input, select, textarea")) continue;
     const clickable = el.tagName === "A" || el.hasAttribute("onclick") || el.hasAttribute("tabindex") || getComputedStyle(el).cursor === "pointer";
     if (!clickable) continue;
     // The outermost clickable element carries the label; its children inherit cursor:pointer.
@@ -184,6 +198,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         const label = await labelOf(locator, q, frame);
         if (!label || label.length > MAX_LABEL) continue;
         if (!(await inOverlay(locator, frame, page, q))) continue;
+        if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
         const found: Found = { locator, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
