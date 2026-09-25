@@ -1,0 +1,53 @@
+{
+  "name": "consentprobe",
+  "version": "0.1.0",
+  "description": "Measure what a website really does before, and after, a visitor answers the cookie banner. Technical findings for GDPR/TDDDG work, not legal advice.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "consentprobe": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0",
+    "tldts": "^7.4.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  },
+  "packageManager": "pnpm@11.5.1",
+  "keywords": [
+    "gdpr",
+    "cookie-consent",
+    "privacy",
+    "playwright",
+    "tdddg",
+    "compliance",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Elijas121/consentprobe.git"
+  },
+  "homepage": "https://github.com/Elijas121/consentprobe#readme",
+  "bugs": {
+    "url": "https://github.com/Elijas121/consentprobe/issues"
+  }
+}
