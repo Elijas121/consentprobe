@@ -32,4 +32,26 @@ describe("markdown report escaping", () => {
     expect(txt).toContain(`[WARN] ${attack}`);
     expect(txt).toContain(`        ${attack}`);
   });
+
+  it("escapes page-controlled control labels and the URL in the markdown banner line only", () => {
+    const label = "<img src=https://evil.example/x.png>[x](https://evil.example)";
+    const r: ScanResult = {
+      ...base,
+      finalUrl: "https://example.com/<b>~~x~~</b>",
+      consent: {
+        banner: { detected: true, cmp: "<i>CMP</i>", rejectFound: true, acceptFound: false },
+        reject: { action: "reject", clicked: true, control: { label, method: "text" }, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] },
+      },
+    };
+
+    const md = formatMarkdown(r);
+    expect(md).toContain('reject: found ("\\<img src=https://evil\\.example/x\\.png\\>\\[x\\]\\(https://evil\\.example\\)")');
+    expect(md).toContain("recognized (\\<i\\>CMP\\</i\\>)");
+    expect(md).toContain("- URL: https://example\\.com/\\<b\\>\\~\\~x\\~\\~\\</b\\>");
+    expect(md).not.toMatch(/(^|[^\\])</m);
+
+    const txt = formatText(r);
+    expect(txt).toContain(`reject: found ("${label}")`);
+    expect(txt).toContain("recognized (<i>CMP</i>)");
+  });
 });

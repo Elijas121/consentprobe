@@ -3,7 +3,7 @@ import type { Finding, ScanResult, Severity } from "./types.js";
 const ORDER: Severity[] = ["error", "warn", "info"];
 const DISCLAIMER =
   "Technical findings only. This is not legal advice and does not assess whether a data-protection or accessibility law is violated.";
-const MARKDOWN_SPECIAL = /([\\`*_{}[\]()#+\-.!|>])/g;
+const MARKDOWN_SPECIAL = /([\\`*_{}[\]()#+\-.!|<>~])/g;
 
 function sorted(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
@@ -23,15 +23,16 @@ function phaseLine(r: ScanResult): string {
     : `Phase: ${r.phase} (no interaction with any cookie banner); click test skipped`;
 }
 
-function bannerLine(r: ScanResult): string {
+/** `esc` escapes page-controlled text (control labels, CMP name); identity for plain text. */
+function bannerLine(r: ScanResult, esc: (s: string) => string = (s) => s): string {
   const c = r.consent;
   if (!c) return "Consent test: skipped";
   if (!c.banner.detected && c.banner.incomplete) return "Consent banner: search incomplete (parts of the page did not respond)";
   if (!c.banner.detected && c.banner.overlayHint) return "Consent banner: cookie overlay visible, controls not automatable";
   if (!c.banner.detected) return "Consent banner: not recognized";
   const ctl = (s?: { control?: { label: string } }, found = false) =>
-    found ? (s?.control ? `found ("${s.control.label}")` : "found") : "not found";
-  return `Consent banner: recognized${c.banner.cmp ? ` (${c.banner.cmp})` : ""} | reject: ${ctl(c.reject, c.banner.rejectFound)} | accept: ${ctl(c.accept, c.banner.acceptFound)}`;
+    found ? (s?.control ? `found ("${esc(s.control.label)}")` : "found") : "not found";
+  return `Consent banner: recognized${c.banner.cmp ? ` (${esc(c.banner.cmp)})` : ""} | reject: ${ctl(c.reject, c.banner.rejectFound)} | accept: ${ctl(c.accept, c.banner.acceptFound)}`;
 }
 
 export function formatText(r: ScanResult): string {
@@ -55,10 +56,10 @@ export function formatMarkdown(r: ScanResult): string {
   const lines: string[] = [
     `# consentprobe report`,
     "",
-    `- URL: ${r.finalUrl}`,
+    `- URL: ${escapeMarkdown(r.finalUrl)}`,
     `- Scanned: ${r.scannedAt}`,
     `- ${phaseLine(r)}`,
-    `- ${bannerLine(r)}`,
+    `- ${bannerLine(r, escapeMarkdown)}`,
     `- Result: ${r.summary.error} error, ${r.summary.warn} warn, ${r.summary.info} info`,
     `- Third-party hosts: ${r.summary.thirdPartyHosts}`,
     "",
