@@ -187,6 +187,12 @@ export async function startFixtures(): Promise<Fixtures> {
           .replace('id="banner" style="', 'id="banner" style="display:none;')
           .replace("</main>", `<script>setTimeout(function(){document.getElementById('banner').style.display='block';},${delay});</script></main>`));
       }
+      case "/legal-scripted":
+        // Page-builder footer: clickable headings whose URL is set by a script, no href anywhere.
+        return html(200, page(`<h1>Scripted legal</h1><footer><div class="blurb" style="cursor:pointer" onclick="location.href='/impressum'"><h6 tabindex="-1">Impressum</h6></div><div class="blurb" style="cursor:pointer" onclick="location.href='/datenschutz'"><h6 tabindex="-1">Datenschutz</h6></div></footer>`));
+      case "/legal-text-only":
+        // The words appear, but nothing can be clicked: there is no link.
+        return html(200, page(`<h1>Text only</h1><footer><p>Impressum</p><p>Datenschutz</p></footer>`));
       case "/blocked":
         return html(403, page("Da ist etwas schiefgelaufen"));
       case "/impressum":

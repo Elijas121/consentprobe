@@ -109,3 +109,21 @@ describe("clicks that could not be tested", () => {
     expect(f.find((x) => x.id === "consent-accept-not-tested")).toBeUndefined();
   });
 });
+
+describe("legal links without href", () => {
+  it("prefers a real link over a scripted element", async () => {
+    const { findLegalLinks } = await import("../src/legal.js");
+    const r = findLegalLinks([
+      { href: "", text: "Impressum", inFooter: true, scripted: true },
+      { href: "https://e.example/impressum", text: "Impressum", inFooter: true },
+    ]);
+    expect(r.imprint).toMatchObject({ found: true, href: "https://e.example/impressum" });
+    expect(r.imprint.scripted).toBeUndefined();
+  });
+
+  it("uses a scripted element only with the exact standard wording", async () => {
+    const { findLegalLinks } = await import("../src/legal.js");
+    expect(findLegalLinks([{ href: "", text: "Datenschutz", inFooter: true, scripted: true }]).privacy).toMatchObject({ found: true, scripted: true });
+    expect(findLegalLinks([{ href: "", text: "Mehr zum Datenschutz", inFooter: true, scripted: true }]).privacy.found).toBe(false);
+  });
+});

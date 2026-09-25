@@ -152,7 +152,29 @@ async function runBaseline(
         inFooter:
           a.closest("footer, [role='contentinfo'], [id*='footer' i], [class*='footer' i]") !== null ||
           a.getBoundingClientRect().top + window.scrollY > document.documentElement.scrollHeight * 0.75,
-      })),
+      })).concat(
+        // Page builders sometimes render footer items as clickable headings whose URL lives in a
+        // script. Only short, visible, clickable elements with a standard legal label are kept.
+        Array.from(document.querySelectorAll<HTMLElement>("body *"))
+          .filter((el) => {
+            if (el.closest("a[href]")) return false;
+            const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+            if (!text || text.length > 40) return false;
+            if (!/^(impressum|imprint|legal notice|anbieterkennung|datenschutz(erklärung|erklaerung|hinweise|bestimmungen|richtlinie)?|privacy( policy| notice| statement)?|data protection( policy| notice)?)[.:]?$/i.test(text)) return false;
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return false;
+            const role = el.getAttribute("role");
+            return el.hasAttribute("onclick") || el.hasAttribute("tabindex") || role === "link" || role === "button" || getComputedStyle(el).cursor === "pointer";
+          })
+          .map((el) => ({
+            href: "",
+            text: (el.textContent || "").replace(/\s+/g, " ").trim(),
+            inFooter:
+              el.closest("footer, [role='contentinfo'], [id*='footer' i], [class*='footer' i]") !== null ||
+              el.getBoundingClientRect().top + window.scrollY > document.documentElement.scrollHeight * 0.75,
+            scripted: true,
+          })),
+      ),
     ), 5000, () => {
       throw new PageUnresponsiveError();
     });

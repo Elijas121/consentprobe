@@ -4,6 +4,8 @@ export interface RawAnchor {
   href: string;
   text: string;
   inFooter: boolean;
+  /** A clickable element without href (the target is set by a script), e.g. a page-builder footer item. */
+  scripted?: boolean;
 }
 
 interface Kind {
@@ -69,13 +71,19 @@ function pick(anchors: RawAnchor[], kind: Kind): { best?: RawAnchor; weak?: RawA
   return { best, weak };
 }
 
-/** Pure selection step; HTTP status is added by the scanner afterwards. */
+/**
+ * Pure selection step; HTTP status is added by the scanner afterwards. Real links win. A scripted
+ * element counts only when no real link was found and its whole text is the standard wording.
+ */
 export function findLegalLinks(anchors: RawAnchor[]): { imprint: LegalLink; privacy: LegalLink } {
-  const toLink = ({ best, weak }: { best?: RawAnchor; weak?: RawAnchor }): LegalLink =>
-    best
-      ? { found: true, href: best.href, text: best.text, inFooter: best.inFooter }
-      : weak
-        ? { found: false, candidate: { href: weak.href, text: weak.text } }
-        : { found: false };
-  return { imprint: toLink(pick(anchors, IMPRINT)), privacy: toLink(pick(anchors, PRIVACY)) };
+  const real = anchors.filter((a) => !a.scripted);
+  const scripted = anchors.filter((a) => a.scripted);
+  const resolve = (kind: Kind): LegalLink => {
+    const { best, weak } = pick(real, kind);
+    if (best) return { found: true, href: best.href, text: best.text, inFooter: best.inFooter };
+    const byScript = scripted.find((a) => kind.exact.test(a.text.replace(/\s+/g, " ").replace(/[.:]+$/, "").trim()));
+    if (byScript) return { found: true, text: byScript.text, inFooter: byScript.inFooter, scripted: true };
+    return weak ? { found: false, candidate: { href: weak.href, text: weak.text } } : { found: false };
+  };
+  return { imprint: resolve(IMPRINT), privacy: resolve(PRIVACY) };
 }

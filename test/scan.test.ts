@@ -118,6 +118,20 @@ describe("scan (real browser)", () => {
     expect(isConsentWallRedirect("https://a.example/consent/", "https://a.example/consent/")).toBe(false);
   });
 
+  it("counts clickable legal items without href as found, with an unverifiable target", async () => {
+    const r = await scan(`${fx.origin}/legal-scripted`, opts());
+    expect(r.legal.imprint).toMatchObject({ found: true, scripted: true });
+    expect(r.legal.privacy).toMatchObject({ found: true, scripted: true });
+    expect(ids(r)).not.toContain("imprint-link-missing");
+    expect(r.findings.find((f) => f.id === "imprint-link-unverified")?.message).toContain("scripted element");
+  });
+
+  it("still reports a missing imprint when the word is only plain text", async () => {
+    const r = await scan(`${fx.origin}/legal-text-only`, opts());
+    expect(ids(r)).toContain("imprint-link-missing");
+    expect(ids(r)).toContain("privacy-link-missing");
+  });
+
   it("explains an invalid URL", async () => {
     await expect(scan("not a url")).rejects.toThrow(/not a valid URL/);
   });

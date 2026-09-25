@@ -220,7 +220,9 @@ export function findingsForLegal(
       findings.push({
         id: `${key}-link-unverified`,
         severity: "info",
-        message: `The ${label} link could not be checked (no response, possibly a timeout or bot protection).`,
+        message: link.scripted
+          ? `The ${label} link is a scripted element without a URL ("${link.text ?? ""}"), so its target could not be checked.`
+          : `The ${label} link could not be checked (no response, possibly a timeout or bot protection).`,
         evidence: link.href ? [link.href] : [],
       });
     }

@@ -56,7 +56,7 @@ const ACCEPT_STRICT: RegExp[] = [
   /^ich\s+akzeptiere(\s+alle)?$/,
   /^(ich\s+bin\s+)?einverstanden$/,
   /^geht\s+klar$/,
-  /^(accept|allow|agree)(\s+all)?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
+  /^(accept|allow|agree)(\s+(all|everything))?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
   /^i\s+(agree|accept)$/,
 ];
 /** Loose: anything that mentions rejecting. Reported, never clicked. */

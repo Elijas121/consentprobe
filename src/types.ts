@@ -54,6 +54,8 @@ export interface LegalLink {
   text?: string;
   inFooter?: boolean;
   status?: number;
+  /** Found as a clickable element without href; its target could not be checked. */
+  scripted?: boolean;
 }
 
 export interface Finding {

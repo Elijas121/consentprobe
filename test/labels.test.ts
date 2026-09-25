@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel } from "../src/consent.js";
 
 describe("banner wording seen on large sites", () => {
-  const accept = ["Geht klar", "Allen Zwecken zustimmen", "Allen zustimmen", "Allen Cookies zustimmen", "Alle Cookies zulassen"];
+  const accept = ["Geht klar", "Allen Zwecken zustimmen", "Allen zustimmen", "Allen Cookies zustimmen", "Alle Cookies zulassen", "Accept everything 🍪"];
   const reject = ["Nur notwendige Cookies", "Nur erforderliche Cookies zulassen", "Einwilligung ablehnen", "Optionale Cookies ablehnen"];
 
   it("recognizes general accept and reject labels, and every one passes the pre-filter", () => {
