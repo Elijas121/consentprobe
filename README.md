@@ -149,6 +149,7 @@ Everything runs on your machine. Query strings are removed from recorded URLs be
 pnpm test        # unit tests plus real-browser tests against local fixtures
 pnpm typecheck
 pnpm build
+pnpm demo        # run the README example against local fixtures and write screenshots to a temp folder
 ```
 
 See `AGENTS.md` for conventions, `docs/VALIDATION.md` for how accuracy was measured and `docs/RESEARCH.md` for prior art and data licenses.
