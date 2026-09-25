@@ -18,7 +18,7 @@ Runs a real browser against a URL in three isolated visits (baseline, reject cli
 From the consentprobe checkout (built with `pnpm build`), or via `npx consentprobe` once published:
 
 ```bash
-node dist/cli.js <url> --format json --screenshots ./evidence --fail-on never
+node dist/cli.js <url> --format json --screenshots ../evidence --fail-on never
 ```
 
 Useful options: `--first-party <domain>` for the operator's own asset CDN, `--imprint always` to force the imprint check, `--no-click-test` for a quick baseline, `--browser chrome` to use installed Chrome.
@@ -34,11 +34,14 @@ The JSON has `findings[]` (`id`, `severity`, `message`, `evidence[]`), `consent.
 | `third-party-before-consent:*` | A known service was contacted before any click | Load it only after consent; self-host fonts and libraries |
 | `tracker-cookie-before-consent:*` | A known tracking cookie exists before any click | Set it only after consent |
 | `third-party-after-reject:*`, `tracker-cookie-after-reject:*` | Still active after the reject click | Check that the consent tool really blocks the script; look at the screenshots |
-| `consent-mode-ping-after-reject:*` | Google Consent Mode "denied" pings (`gcs=G100`) after reject | Disputed; decide deliberately whether cookieless pings are acceptable after a reject |
+| `consent-mode-ping-before-consent:*`, `consent-mode-ping-after-reject:*` | Google Consent Mode "denied" pings (`gcs=G100`) before consent or after reject | Disputed; decide deliberately whether cookieless pings are acceptable without consent |
 | `tracker-cookies-not-removed-after-reject` | Tracker cookies from before the click are still there, unchanged | Context: the before-consent findings are the real issue |
 | `no-reject-control-on-first-layer` | Accept found, no general reject on the first layer | Add an equally prominent reject control, or explain the flow |
 | `imprint-*`, `privacy-*` | Legal page link missing, broken, uncertain (e.g. hidden in a menu) or not verifiable | Add or fix the footer link |
 | `consent-detection-incomplete` | Parts of the page did not respond, so the banner search is incomplete | Say so; do not claim there is no banner |
+| `consent-wall-page` | The first visit was redirected to a separate consent page; legal links were not judged | Say that the site behind the wall was not measured |
+| `consent-reject-not-tested`, `consent-accept-not-tested` | The control appeared in one visit only | Say which click was not tested; suggest a rerun with a longer `--banner-wait` |
+| `unclassified-third-party-after-reject` | Unknown hosts that appeared only after the reject click | Identify them before calling anything tracking |
 | `consent-overlay-not-automatable` | A cookie overlay is visible but has no automatable reject/accept | Check the screenshots by hand |
 | `consent-unlocks`, `unclassified-third-party`, `consent-management-detected`, `infrastructure-cookies-*`, `*-skipped` | Context only | Review manually |
 

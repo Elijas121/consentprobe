@@ -75,10 +75,23 @@ After the fixes, a baseline scan of all sites produced exactly four legal findin
 - No scan ran into the 3-minute watchdog in the final runs. Two sites that used to hang now finish in 10-12 s.
 - 72 automated tests with a real browser; every new guard was checked by breaking it on purpose (the test must turn red).
 
+## Large sites (2026-09-25)
+
+The 71 sites above are small businesses. A later scan of 20 large German sites (retail, travel, news, portals) showed problems that small sites never triggered. Each one was checked against screenshots; this check was not blind and was done by the same AI assistant.
+
+- **Headless browsers are treated differently.** Two sites showed no banner to the headless browser, although a normal browser gets one. One of them loaded eight tracking services only for the headless browser, and the tool reported ten errors that a regular visitor never triggers. Two more sites refused the headless browser with HTTP 403. Fix: visits present themselves like Chromium in a normal window; all four sites are measured correctly now.
+- **Controls that are not buttons.** One banner built its controls from links without `href`; they have no button or link role and were missed. Fix: plain clickable elements inside the overlay are searched too, with the same whole-label rules.
+- **Wording.** "Geht klar", "Allen Zwecken zustimmen" and "Einwilligung ablehnen" were unknown. Added, with tests for similar wording that must not match.
+- **Lazy footer.** One footer rendered only when scrolled into view, so its link text read as empty and a false "no imprint" error followed. Fix: a link that takes up space counts with its text content.
+- **Consent wall.** One site redirected the first visit to a separate consent page, and the tool judged that page's missing footer links. Fix: such redirects are recognized and legal links are not judged there.
+- **Late banner.** On one site only the accept visit saw the banner, so reject was never tested, and the report did not say so. Fix: the other visit is repeated once with a longer wait, and an untested click is reported.
+
+After these fixes the tool recognized the banner on all 17 of the 20 large sites that show one; of the other three, one redirects to a consent wall, one has no banner and one still refuses automated browsers (HTTP 403) and is not measured. A blind sample judged by a person, with small and large sites, is the next step.
+
 ## Limits
 
-- **One judge.** The ground truth was judged by the same person (an AI assistant) who tuned the heuristics. Sample 3 was blind and untouched by tuning, but an outside reviewer is still missing.
-- **Small samples.** 71 sites, mostly German-speaking small businesses. Large sites, other languages and exotic consent tools are underrepresented.
+- **One judge.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. Sample 3 was blind and untouched by tuning, but an outside reviewer is still missing.
+- **Small samples.** 71 small-business sites plus 20 large sites, almost all German-speaking. Other languages and exotic consent tools are underrepresented.
 - **One snapshot.** A banner that appears late can be missing from the baseline screenshot, as happened once.
 - **First layer only.** Settings dialogs behind "Einstellungen" are not tested.
 - **Location.** Scans ran from a single EU IP address. Sites that show banners only in some countries may behave differently elsewhere.

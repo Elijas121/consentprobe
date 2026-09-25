@@ -1,4 +1,4 @@
-# AGENTS.md — consentprobe
+# AGENTS.md for consentprobe
 
 Read this file first. It is the single hand-over document for any AI agent or human working on this repository.
 
@@ -31,6 +31,8 @@ src/
   consent.ts    banner detection (CMP selectors + strict whole-label text match + overlay check), clicking
   navigate.ts   navigation (HTML first, bounded wait for the rest) and one-line navigation errors
   bounded.ts    time limits for page queries: bounded(), ask(), dead-frame skipping
+  identity.ts   how visits present themselves (regular Chromium instead of HeadlessChrome)
+  input.ts      CLI input: URL normalization, millisecond options, --rules validation
   findings.ts   pure functions: requests/cookies/legal/consent -> findings; classification helpers
   classify.ts   registrable domain (tldts), third-party test, rule matching (host suffix + path segment)
   rules.ts      curated tracker rules, category severities, tracker/consent cookie patterns
@@ -44,6 +46,7 @@ src/
 test/
   fixtures.ts   re-exports src/fixtures.ts (first party on "localhost", third party on "127.0.0.1")
   unit.test.ts  pure logic
+  findings.test.ts, input.test.ts, labels.test.ts  pure logic added later (kept separate to avoid merge conflicts)
   scan.test.ts  baseline with a real browser
   consent.test.ts  click test with a real browser
 scripts/scan-list.sh  scan a list of URLs in parallel for regression checks
@@ -59,7 +62,7 @@ docs/VALIDATION.md  validation method, numbers and limits
 pnpm install
 pnpm exec playwright install chromium   # once
 pnpm typecheck
-pnpm test                               # 72 tests, ~100 s, real browser
+pnpm test                               # 103 tests, about two minutes, real browser
 pnpm build
 node dist/cli.js <url> --screenshots ../cp-runs/evidence
 scripts/scan-list.sh ../cp-runs/urls.txt ../cp-runs/out   # real-site regression, then read ../cp-runs/out/*.json
@@ -73,10 +76,13 @@ pnpm trap: a `pnpm-workspace.yaml` in a parent directory makes pnpm treat this r
 
 ## Design decisions (and why)
 
-- **Three isolated visits in parallel.** Separate cookie jars so accept cannot contaminate reject.
+- **Three isolated visits in parallel.** Separate cookie jars so accept cannot contaminate reject. If only one click visit sees the banner, the other is repeated once with twice the banner wait; a click that stays untested is reported (info).
+- **Regular browser identity.** Headless Chromium says "HeadlessChrome" in its user agent and client hints, and several large sites then hide the banner and load tracking at once. Every visit presents itself like the same Chromium in a normal window (`identity.ts`, set per page through CDP, which also covers cross-origin frames). `navigator.webdriver` stays true and HTTP 403 is still refused: the goal is the page a visitor sees, not hiding.
+- **Plain controls.** After the role search (button, link), plain clickable elements inside an overlay are searched too (`<a>` without href, `onclick`, `tabindex`, `cursor: pointer`). The same strict whole-label rules decide; plain text is never clicked.
+- **Consent walls.** A redirect to a separate consent page (host `consent.*` or a path such as `/consent-management/`) is reported as info; legal links are not judged on that page.
 - **Exact click moment.** An init script in every frame reports the physical `pointerdown`/`mousedown` through a binding; only requests after that moment count as "after reject". A marker taken in Node right before `click()` was not enough: the heartbeat test fails 3/3 with it, because Playwright's click takes tens of milliseconds.
 - **Cookies after reject = new or changed only.** Cookies are compared (name, domain, value hash) with a snapshot right before the click. Unchanged tracker cookies from before the click are info ("not removed"); the before-consent findings already cover them.
-- **Google Consent Mode is shown, not guessed.** The only query parameter kept is a validated `gcs` value. `G100` pings after reject are a separate warning with the signal as evidence; a "granted" signal before or after reject is called out explicitly.
+- **Google Consent Mode is shown, not guessed.** The only query parameter kept is a validated `gcs` value. `G100` pings before consent and after reject are a separate warning with the signal as evidence; a "granted" signal before or after reject is called out explicitly.
 - **Nothing may wait forever.** Every page query goes through `ask()` (3 s limit, errors always handled, a thunk so nothing is sent to a dead frame). A frame that timed out once is skipped for the rest of the visit. Navigation waits for the HTML plus a bounded time for the rest. The whole scan has a hard deadline, and `browser.close()` is bounded too.
 - **Incomplete is not "no banner".** If any page query timed out and no banner was found, the result is "search incomplete". A visible cookie overlay without automatable controls is "not automatable". Only a clean search may say "not recognized".
 - **Strict labels.** Only labels that match a general reject/accept as a whole are clicked. A reject-like label for a single service (e.g. "für Partner X jetzt ablehnen") is reported, not clicked. Reason: clicking it produced a false finding on a real site.
@@ -85,7 +91,8 @@ pnpm trap: a `pnpm-workspace.yaml` in a parent directory makes pnpm treat this r
 - **Error pages are not measured** (HTTP >= 400 throws `PageNotMeasurableError`). Otherwise a 403 page produced "no imprint" errors.
 - **Unverifiable is not an error.** A link check that gets no response is info.
 - **Tag manager = warn.** Consent Mode can block tags; analytics and advertising findings carry the real weight.
-- **Imprint only for German-looking sites** (`lang="de"` or .de/.at/.ch), otherwise info.
+- **German rules only for German-looking sites** (`lang="de"` or .de/.at/.ch, or `--imprint always`): there a missing imprint or privacy link is an error. Elsewhere the imprint check is skipped (info) and a missing privacy link is a warning.
+- **Legal link text.** `innerText`, or `textContent` when the link has a box but renders lazily (content-visibility). A link without a box keeps no label and ends up "uncertain".
 - **Query strings are stripped** from recorded URLs.
 
 ## Lessons from real-site scans (do not repeat these mistakes)
@@ -111,6 +118,13 @@ pnpm trap: a `pnpm-workspace.yaml` in a parent directory makes pnpm treat this r
 | **Scan hung for 20+ minutes on two real sites (reproducible)** | an iframe whose server never answers: Playwright's `isVisible()`/`count()` on that frame never return | `ask()` time limits, dead-frame skipping, hard deadline; now 10-12 s with "search incomplete" |
 | Unhandled rejections after a deadline | the query promise was created before the dead-frame check | `ask()` takes a thunk and always attaches error handling |
 | Requests during the screenshot counted as "after reject" | marker set before the slow screenshot | exact press marker (see design decisions) |
+| **Ten false errors on a large site; banners missing on several** | the site hid its banner from "HeadlessChrome" and loaded tracking only for it | regular browser identity (user agent and client hints) |
+| Banner missed although visible | its controls were links without `href` (no button or link role) | plain-control search inside overlays |
+| "Geht klar", "Allen Zwecken zustimmen", "Einwilligung ablehnen" not recognized | wording unknown | patterns plus tests for look-alikes that must not match |
+| "No imprint" error on a large site | footer rendered lazily, so `innerText` of its links was empty | `textContent` for links that have a box |
+| "No imprint" and "no privacy link" on a large site | first visit redirected to a separate consent page | consent-wall detection, no legal checks there |
+| Reject silently untested | only the accept visit saw the late banner | repeat the other visit once; report an untested click |
+| "Search incomplete" on several large sites during a regression run | five scans in parallel overloaded the machine; queries hit their time limit | run large-site regressions with `CP_PARALLEL=2`; the tool degrades to "incomplete", never to a false claim |
 
 Methods lesson: a ground truth from one neutral screenshot can be wrong. Two sample-3 disagreements were the tool being right (a banner that appeared after the screenshot; a banner hidden behind a location popup). Always check the click screenshots before blaming the tool, and report such corrections openly.
 
@@ -118,18 +132,18 @@ A theory that turned out wrong: a banner dialog looked like a marketing mock-up,
 
 ## Current status (2026-09-25)
 
-- Core scanner, click test, evidence screenshots, first-party option, imprint mode: done and tested (72 tests, ~100 s, zero unhandled rejections). The suite passes on Node 20, 22 and 26; the packed tarball installs and runs from a clean folder.
-- Verified on real sites (names kept out of the repo on purpose): a OneTrust shop where reject works with no findings; several sites without a general reject on the first layer; a site that blocks headless browsers; the sites of seven consent vendors detected.
+- Core scanner, click test, evidence screenshots, first-party option, imprint mode, demo: done and tested (103 tests, about two minutes, zero unhandled rejections). The suite passes on Node 20, 22 and 26; the packed tarball installs and runs from a clean folder.
+- Verified on real sites (names kept out of the repo on purpose): 71 small-business sites and 20 large German sites; see `docs/VALIDATION.md`.
 - **Validation:** 71 real sites in three samples, two of them judged blind, each scanned three times. See `docs/VALIDATION.md` for method, numbers and limits. Raw results with site names are kept out of the repo.
 - **Tracking after reject is verified on real sites:** three screenshot-checked cases (a HubSpot click pixel; Microsoft Clarity sending data after reject; Clarity loaded only after "Decline"). No site names in the repo.
 - GitHub: public repo `Elijas121/consentprobe`. CI runs the tests on Node 20 and 22; `action-smoke` runs the composite action against https://example.com.
-- Not done: npm publish, demo GIF.
+- Not done: npm publish, a blind validation judged by a person.
 
 ## Next steps
 
-1. Demo GIF from a local fixture (never a real site), then npm publish.
-2. A third-party review of the validation (someone other than the person who tuned the heuristics).
-3. Second banner layers ("Settings"), EU geolocation option.
+1. A blind validation with small and large sites, judged by a person from neutral screenshots.
+2. npm publish.
+3. Second banner layers ("Settings"), full-page consent walls, EU geolocation option.
 
 ## Definition of done for any change
 
