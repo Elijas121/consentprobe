@@ -139,8 +139,9 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/blocked":
         return html(403, page("Da ist etwas schiefgelaufen"));
       case "/impressum":
+        return html(200, page(`<h1>/impressum</h1>`));
       case "/datenschutz":
-        return html(200, page(`<h1>${path}</h1>`));
+        return html(200, page(`<h1>/datenschutz</h1>`));
       default:
         return html(404, page("not found"));
     }
