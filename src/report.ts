@@ -3,9 +3,18 @@ import type { Finding, ScanResult, Severity } from "./types.js";
 const ORDER: Severity[] = ["error", "warn", "info"];
 const DISCLAIMER =
   "Technical findings only. This is not legal advice and does not assess whether a data-protection or accessibility law is violated.";
+const MARKDOWN_SPECIAL = /([\\`*_{}[\]()#+\-.!|>])/g;
 
 function sorted(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
+}
+
+function escapeMarkdown(text: string): string {
+  return text.replace(MARKDOWN_SPECIAL, "\\$1");
+}
+
+function codeSpan(text: string): string {
+  return `\`${text.replaceAll("`", "'")}\``;
 }
 
 function phaseLine(r: ScanResult): string {
@@ -59,8 +68,8 @@ export function formatMarkdown(r: ScanResult): string {
     if (group.length === 0) continue;
     lines.push(`## ${sev.toUpperCase()}`, "");
     for (const f of group) {
-      lines.push(`- ${f.message}`);
-      for (const e of f.evidence) lines.push(`  - \`${e}\``);
+      lines.push(`- ${escapeMarkdown(f.message)}`);
+      for (const e of f.evidence) lines.push(`  - ${codeSpan(e)}`);
     }
     lines.push("");
   }
