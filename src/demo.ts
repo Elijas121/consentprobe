@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -14,12 +14,12 @@ export interface DemoResult {
 
 export interface DemoDeps {
   mkTempDir?: () => Promise<string>;
-  runCli?: (url: string, screenshotDir: string) => Promise<number>;
+  runCli?: (url: string, screenshotDir: string, rulesFile: string) => Promise<number>;
 }
 
-async function runBuiltCli(url: string, screenshotDir: string): Promise<number> {
+async function runBuiltCli(url: string, screenshotDir: string, rulesFile: string): Promise<number> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["dist/cli.js", url, "--screenshots", screenshotDir, "--fail-on", "never"], {
+    const child = spawn(process.execPath, ["dist/cli.js", url, "--screenshots", screenshotDir, "--rules", rulesFile, "--fail-on", "never"], {
       stdio: "inherit",
     });
     child.on("error", reject);
@@ -37,8 +37,14 @@ export async function runDemo(deps: DemoDeps = {}): Promise<DemoResult> {
 
   const fixtures = await startFixtures();
   const targetUrl = `${fixtures.origin}/banner-bad`;
+  // The fixture's "third party" is a local server; name it so the report matches the README example.
+  const rulesFile = join(screenshotDir, "demo-rules.json");
+  await writeFile(
+    rulesFile,
+    JSON.stringify([{ id: "demo-analytics", name: "Demo Analytics", category: "analytics", hosts: [fixtures.thirdPartyHost] }]),
+  );
   try {
-    const exitCode = await runCli(targetUrl, screenshotDir);
+    const exitCode = await runCli(targetUrl, screenshotDir, rulesFile);
     return { exitCode, targetUrl, screenshotDir };
   } finally {
     await fixtures.close();

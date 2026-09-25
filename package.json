@@ -11,6 +11,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "!dist/demo.*",
+    "!dist/fixtures.*",
     "README.md",
     "LICENSE"
   ],
