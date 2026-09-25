@@ -93,14 +93,21 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/legal-outside-footer":
         return html(200, page(`<a href="/impressum">Impressum</a> <a href="/datenschutz">Datenschutz</a>`));
       case "/banner-good":
+        return html(200, bannerPage("good", thirdOrigin));
       case "/banner-bad":
+        return html(200, bannerPage("bad", thirdOrigin));
       case "/banner-no-reject":
+        return html(200, bannerPage("no-reject", thirdOrigin));
       case "/banner-delayed":
+        return html(200, bannerPage("delayed", thirdOrigin));
       case "/banner-borlabs-style":
+        return html(200, bannerPage("borlabs-style", thirdOrigin));
       case "/banner-text-link-reject":
+        return html(200, bannerPage("text-link-reject", thirdOrigin));
       case "/banner-consent-mode":
+        return html(200, bannerPage("consent-mode", thirdOrigin));
       case "/banner-kept-cookie":
-        return html(200, bannerPage(path.slice("/banner-".length) as BannerKind, thirdOrigin));
+        return html(200, bannerPage("kept-cookie", thirdOrigin));
       case "/banner-toggle-only":
         // Cookie overlay whose only control is a "save settings" button: not automatable.
         return html(200, page(`<h1>Toggle banner</h1>${FOOTER}<div style="position:fixed;bottom:0;right:0;width:320px;height:200px;background:#fff;padding:1rem"><p>Wir verwenden Cookies und Dienste Dritter.</p><label><input type="checkbox"> Ich akzeptiere die Verwendung von Cookies</label><button type="button">Einstellungen speichern</button></div>`));
