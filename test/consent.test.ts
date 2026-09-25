@@ -203,6 +203,14 @@ describe("consent click test (real browser)", () => {
     expect(find(none, "no-reject-control-on-first-layer")).toBeDefined();
   });
 
+  it("finds a consent bar that is part of the page flow, by its container name", async () => {
+    const r = await scan(`${fx.origin}/banner-inline-top`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Ablehnen");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+  });
+
   it("never clicks control-like words that are plain text in an overlay", async () => {
     const r = await scan(`${fx.origin}/overlay-text-not-control`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });

@@ -49,6 +49,18 @@ const REJECT_STRICT: RegExp[] = [
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
   /^((accept|allow|use)\s+)?(only\s+)?(strictly\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
   /^continue\s+without\s+(accepting|consent)$/,
+  // French, Italian, Spanish, Dutch, Polish. "Reject and subscribe" (pay or okay) stays out on purpose.
+  /^(tout\s+)?refuser(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
+  /^(je\s+refuse(\s+tout)?|continuer\s+sans\s+accepter)$/,
+  /^(accepter\s+)?(uniquement|seulement)\s+(les\s+)?cookies\s+(strictement\s+)?(nécessaires|essentiels)$/,
+  /^(rifiuta(\s+tutt[oi])?(\s+i\s+cookie)?|rifiuto|non\s+accetto|continua\s+senza\s+accettare)$/,
+  /^(accetta\s+)?solo\s+(i\s+)?(cookie\s+)?(necessari|essenziali|tecnici)$/,
+  /^(rechazar(\s+tod[oa]s?)?(\s+las\s+cookies)?|continuar\s+sin\s+aceptar)$/,
+  /^(aceptar\s+)?solo\s+(las\s+)?(cookies\s+)?(necesarias|esenciales|técnicas)$/,
+  /^((alles|alle(\s+cookies)?)\s+)?(weigeren|afwijzen)$/,
+  /^alleen\s+(noodzakelijke|functionele|essentiële)(\s+cookies)?(\s+(accepteren|toestaan))?$/,
+  /^odrzuć(\s+wszystk(ie|o))?$/,
+  /^(akceptuj\s+)?tylko\s+(niezbędne|wymagane|konieczne)(\s+(pliki\s+)?cookies?)?$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
   /^(alle[ns]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
@@ -58,17 +70,28 @@ const ACCEPT_STRICT: RegExp[] = [
   /^geht\s+klar$/,
   /^(accept|allow|agree)(\s+(all|everything))?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
   /^i\s+(agree|accept)(\s+all)?(\s+cookies)?$/,
+  // French, Italian, Spanish, Dutch, Polish. A bare "Autoriser" is left out: push-notification prompts use it.
+  /^(tout\s+)?accepter(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
+  /^(j\s+accepte(\s+tout)?|tout\s+autoriser|autoriser\s+tous\s+les\s+cookies)$/,
+  /^accett[ao](\s+tutt[oi])?(\s+i\s+cookie)?(\s+e\s+(chiudi|continua))?$/,
+  /^consenti\s+tutt[oi]$/,
+  /^acept(ar|o)(\s+tod[oa]s?)?(\s+las\s+cookies)?(\s+y\s+(cerrar|continuar))?$/,
+  /^permitir\s+todas?(\s+las\s+cookies)?$/,
+  /^((alles|alle(\s+cookies)?)\s+)?accepteren(\s+en\s+(sluiten|doorgaan))?$/,
+  /^(akkoord(\s+en\s+doorgaan)?|(alles|alle\s+cookies)\s+toestaan)$/,
+  /^(za)?akceptuj(ę)?(\s+wszystk(ie|o))?$/,
+  /^(zgadzam\s+się|zezwól\s+na\s+wszystkie)$/,
 ];
 /** Loose: anything that mentions rejecting. Reported, never clicked. */
-const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse/i;
-const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow/i;
+const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse|refuser|rifiut|rechaz|weiger|afwijz|odrzu/i;
+const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow|accett|acept|akcept|akkoord/i;
 
 /**
  * Cheap pre-filter for the accessible-name query. Invariant (tested): every label that the
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without/i;
+  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -77,7 +100,9 @@ export const isRejectLike = (label: string): boolean => REJECT_LIKE.test(label);
 const MAX_LABEL = 50;
 
 /**
- * True when the element sits in a real overlay (fixed or sticky ancestor, or a dialog).
+ * True when the element sits in a real overlay (fixed or sticky ancestor, or a dialog), or in a
+ * container the site itself names as its cookie or consent UI (id, class or tag name), such as a
+ * consent bar at the top of the page that pushes the content down instead of floating over it.
  * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked.
  */
 const isOverlayElement = (el: Element): boolean => {
@@ -87,6 +112,10 @@ const isOverlayElement = (el: Element): boolean => {
     const role = n.getAttribute("role");
     if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
       return true;
+    }
+    // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
+    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (((n as HTMLElement).innerText || "").length < 4000) return true;
     }
   }
   return false;
@@ -157,6 +186,10 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
       if (position === "fixed" || position === "sticky") return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
+      // Same rule as isOverlayElement: a container the site names as its cookie or consent UI.
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+        if (((n as HTMLElement).innerText || "").length < 4000) return true;
+      }
     }
     return false;
   };
@@ -265,14 +298,15 @@ export async function locateControls(page: Page, waitMs: number, q: QueryBudget)
   return {};
 }
 
-/** True when a visible fixed overlay mentions cookies, even if no control could be recognized. */
+/** True when a visible overlay or named consent container mentions cookies, even if no control could be recognized. */
 async function cookieOverlayVisible(page: Page, q: QueryBudget): Promise<boolean> {
   for (const frame of page.frames()) {
     const hit = await ask(
       () => frame.evaluate(() => {
         for (const el of Array.from(document.querySelectorAll("body *"))) {
           const style = getComputedStyle(el);
-          if (style.position !== "fixed" && style.position !== "sticky") continue;
+          const named = /cookie|consent|gdpr/i.test(`${el.tagName} ${el.id} ${el.getAttribute("class") ?? ""}`);
+          if (style.position !== "fixed" && style.position !== "sticky" && !named) continue;
           const rect = el.getBoundingClientRect();
           // Thin notice bars (about 30 px) count too; small widgets such as chat bubbles do not.
           if (rect.width < 300 || rect.height < 20 || style.visibility === "hidden" || style.display === "none") continue;
