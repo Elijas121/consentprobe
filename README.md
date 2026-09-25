@@ -18,7 +18,9 @@ Most open-source privacy scanners measure only the first page load. What matters
 
 ## Example
 
-Output for a test page whose banner ignores the reject click (a local fixture, not a real site):
+Output for a test page whose banner ignores the reject click (a local fixture, not a real site). Run it yourself with `pnpm demo`.
+
+![consentprobe run against a local test page: the banner's reject click is ignored and tracking continues](docs/demo.gif)
 
 ```
 consentprobe 0.1.0  http://localhost:PORT/banner-bad
@@ -28,7 +30,7 @@ Consent banner: recognized | reject: found ("Alle ablehnen") | accept: found ("A
 
 [ERROR] Demo Analytics (analytics): 1 request(s) after the reject control was clicked.
         https://tracker.example/analytics.js
-[ERROR] Google Analytics cookie(s) present after the reject control was clicked.
+[ERROR] Google Analytics cookie(s) set or changed after the reject control was clicked.
         _ga (localhost)
 [INFO] Accepting loaded 1 known service(s) (Demo Analytics) and 0 further unclassified third-party host(s).
 
@@ -150,6 +152,7 @@ pnpm test        # unit tests plus real-browser tests against local fixtures
 pnpm typecheck
 pnpm build
 pnpm demo        # run the README example against local fixtures and write screenshots to a temp folder
+vhs docs/demo.tape  # re-record docs/demo.gif (needs https://github.com/charmbracelet/vhs)
 ```
 
 See `AGENTS.md` for conventions, `docs/VALIDATION.md` for how accuracy was measured and `docs/RESEARCH.md` for prior art and data licenses.
