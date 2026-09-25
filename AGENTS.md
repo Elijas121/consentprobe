@@ -39,8 +39,10 @@ src/
   types.ts      all shared types
   index.ts      library exports
   version.ts    version string
+  fixtures.ts   local test servers and fake banners (used by tests and `pnpm demo`; excluded from the npm package)
+  demo.ts       `pnpm demo`: runs the CLI against the local fixture whose banner ignores reject
 test/
-  fixtures.ts   local servers (first party on "localhost", third party on "127.0.0.1") and fake banners
+  fixtures.ts   re-exports src/fixtures.ts (first party on "localhost", third party on "127.0.0.1")
   unit.test.ts  pure logic
   scan.test.ts  baseline with a real browser
   consent.test.ts  click test with a real browser
