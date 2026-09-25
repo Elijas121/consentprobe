@@ -1,0 +1,177 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { scan } from "../src/scan.js";
+import { startFixtures, type Fixtures } from "./fixtures.js";
+
+let fx: Fixtures;
+beforeAll(async () => {
+  fx = await startFixtures();
+});
+afterAll(async () => {
+  await fx.close();
+});
+
+const opts = () => ({
+  settleMs: 400,
+  timeoutMs: 15000,
+  bannerWaitMs: 4000,
+  extraRules: [
+    { id: "test-analytics", name: "Test Analytics", category: "analytics" as const, hosts: [fx.thirdPartyHost] },
+  ],
+});
+const find = (r: Awaited<ReturnType<typeof scan>>, id: string) => r.findings.find((f) => f.id === id);
+
+describe("consent click test (real browser)", () => {
+  it("passes a banner that respects reject and shows what accept unlocks", async () => {
+    const r = await scan(`${fx.origin}/banner-good`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject).toMatchObject({ clicked: true });
+    expect(r.consent?.accept).toMatchObject({ clicked: true });
+    expect(r.findings.filter((f) => f.id.includes("after-reject"))).toEqual([]);
+    expect(r.summary.error).toBe(0);
+    expect(find(r, "consent-unlocks")?.message).toContain("Test Analytics");
+  });
+
+  it("flags a tracker request and cookie that continue after reject", async () => {
+    const r = await scan(`${fx.origin}/banner-bad`, opts());
+    expect(find(r, "third-party-after-reject:test-analytics")?.severity).toBe("error");
+    expect(find(r, "tracker-cookie-after-reject:google-analytics")?.severity).toBe("error");
+    expect(r.summary.error).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reports a Consent Mode 'denied' ping after reject as its own warning, not as tracking", async () => {
+    const r = await scan(`${fx.origin}/banner-consent-mode`, opts());
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(find(r, "consent-mode-ping-after-reject:test-analytics")?.severity).toBe("warn");
+    expect(find(r, "consent-mode-ping-after-reject:test-analytics")?.evidence[0]).toContain("gcs=G100");
+    expect(find(r, "third-party-after-reject:test-analytics")).toBeUndefined();
+  });
+
+  it("does not blame reject for a tracker cookie that was set before and left unchanged", async () => {
+    const r = await scan(`${fx.origin}/banner-kept-cookie`, opts());
+    expect(find(r, "tracker-cookie-before-consent:google-analytics")?.severity).toBe("error");
+    expect(find(r, "tracker-cookie-after-reject:google-analytics")).toBeUndefined();
+    expect(find(r, "tracker-cookies-not-removed-after-reject")?.severity).toBe("info");
+  });
+
+  it("warns when only an accept control exists on the first layer", async () => {
+    const r = await scan(`${fx.origin}/banner-no-reject`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: false, acceptFound: true });
+    expect(find(r, "no-reject-control-on-first-layer")?.severity).toBe("warn");
+    expect(r.consent?.reject?.clicked).toBe(false);
+  });
+
+  it("recognizes real-world wording such as 'Ich akzeptiere alle' and 'Nur essenzielle Cookies akzeptieren'", async () => {
+    const r = await scan(`${fx.origin}/banner-borlabs-style`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.accept?.clicked).toBe(true);
+    expect(r.consent?.reject?.clicked).toBe(true);
+  });
+
+  it("finds a low-emphasis reject such as 'Nur essenzielle' (regression from a real site)", async () => {
+    const r = await scan(`${fx.origin}/banner-text-link-reject`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(find(r, "no-reject-control-on-first-layer")).toBeUndefined();
+  });
+
+  it("waits for a banner that appears late", async () => {
+    const r = await scan(`${fx.origin}/banner-delayed`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+  });
+
+  it("says so, without judging, when no banner is recognized", async () => {
+    const r = await scan(`${fx.origin}/clean`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner.detected).toBe(false);
+    expect(find(r, "no-consent-banner-detected")?.severity).toBe("info");
+    expect(r.summary.error).toBe(0);
+  });
+
+  it("never clicks controls of a banner mock-up that is not an overlay", async () => {
+    const r = await scan(`${fx.origin}/banner-mockup`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner.detected).toBe(false);
+    expect(r.consent?.reject).toMatchObject({ clicked: false });
+    expect(r.consent?.accept).toMatchObject({ clicked: false });
+  });
+
+  it("does not claim 'no banner' when a cookie overlay is visible but not automatable", async () => {
+    const r = await scan(`${fx.origin}/banner-toggle-only`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });
+    expect(find(r, "consent-overlay-not-automatable")?.severity).toBe("info");
+    expect(find(r, "no-consent-banner-detected")).toBeUndefined();
+  });
+
+  it("saves a neutral baseline screenshot plus before/after screenshots of each click", async () => {
+    const { mkdtemp, readdir } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "consentprobe-"));
+    await scan(`${fx.origin}/banner-good`, { ...opts(), screenshotDir: dir });
+    expect((await readdir(dir)).sort()).toEqual([
+      "accept-1-before-click.png",
+      "accept-2-after-click.png",
+      "baseline.png",
+      "reject-1-before-click.png",
+      "reject-2-after-click.png",
+    ]);
+  });
+
+  it("recognizes Shopify's privacy banner by its button ids even with renamed labels", async () => {
+    const r = await scan(`${fx.origin}/banner-shopify`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, cmp: "Shopify", rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject).toMatchObject({ clicked: true, control: { label: "No Thanks", method: "cmp-selector" } });
+  });
+
+  it("never treats a newsletter popup's 'No thanks' as a cookie reject", async () => {
+    const r = await scan(`${fx.origin}/newsletter-popup`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.reject?.clicked).toBe(false);
+  });
+
+  it("notices a thin cookie information bar instead of claiming there is no banner", async () => {
+    const r = await scan(`${fx.origin}/notice-bar`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });
+    expect(find(r, "consent-overlay-not-automatable")).toBeDefined();
+    expect(r.summary.error).toBe(0);
+    expect(r.summary.warn).toBe(0);
+  });
+
+  it("does not count requests from before the press as 'after reject', also with slow screenshots", async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    for (const screenshotDir of [undefined, await mkdtemp(join(tmpdir(), "consentprobe-hb-"))]) {
+      const r = await scan(`${fx.origin}/banner-heartbeat`, { ...opts(), screenshotDir });
+      expect(r.consent?.reject?.clicked).toBe(true);
+      expect(find(r, "third-party-before-consent:test-analytics")?.severity).toBe("error");
+      expect(find(r, "third-party-after-reject:test-analytics")).toBeUndefined();
+    }
+  }, 60000);
+
+  it("stops with a clear error instead of hanging when the page freezes the browser", async () => {
+    const started = Date.now();
+    await expect(scan(`${fx.origin}/hung-after-load`, { ...opts(), timeoutMs: 15000 })).rejects.toThrow(/stopped responding/);
+    expect(Date.now() - started).toBeLessThan(45000);
+  }, 60000);
+
+  it("reports 'incomplete', not 'no banner', when a frame that never loads blocks the search", async () => {
+    const r = await scan(`${fx.origin}/stalled-frame`, { ...opts(), timeoutMs: 15000, bannerWaitMs: 1500 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, incomplete: true });
+    expect(find(r, "consent-detection-incomplete")?.severity).toBe("info");
+    expect(find(r, "no-consent-banner-detected")).toBeUndefined();
+  }, 60000);
+
+  it("still finds and clicks a banner when an unrelated frame never loads, without long delays", async () => {
+    const started = Date.now();
+    const r = await scan(`${fx.origin}/stalled-frame-with-banner`, { ...opts(), timeoutMs: 15000 });
+    expect(Date.now() - started).toBeLessThan(40000);
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.banner.incomplete).toBeUndefined();
+  }, 60000);
+
+  it("skips the click visits when clickTest is off", async () => {
+    const r = await scan(`${fx.origin}/banner-good`, { ...opts(), clickTest: false });
+    expect(r.consent).toBeUndefined();
+  });
+});

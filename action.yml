@@ -1,0 +1,56 @@
+name: consentprobe
+description: Measure what a website does before and after the cookie banner and fail the job on findings.
+author: Elias Delil
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  url:
+    description: URL to scan
+    required: true
+  fail-on:
+    description: "Fail the job at this severity or above: error, warn or never"
+    default: error
+  imprint:
+    description: "Imprint check: auto, always or never"
+    default: auto
+  first-party:
+    description: Extra first-party domain of the site operator (one domain)
+    default: ""
+  report:
+    description: Path of the Markdown report file
+    default: consentprobe-report.md
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - name: Install consentprobe
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        corepack enable
+        pnpm install --frozen-lockfile
+        pnpm exec playwright install --with-deps chromium
+        pnpm build
+    - name: Scan
+      shell: bash
+      env:
+        CP_URL: ${{ inputs.url }}
+        CP_FAIL_ON: ${{ inputs.fail-on }}
+        CP_IMPRINT: ${{ inputs.imprint }}
+        CP_FIRST_PARTY: ${{ inputs.first-party }}
+        CP_REPORT: ${{ inputs.report }}
+      run: |
+        args=("$CP_URL" --format md --out "$CP_REPORT" --fail-on "$CP_FAIL_ON" --imprint "$CP_IMPRINT")
+        if [ -n "$CP_FIRST_PARTY" ]; then args+=(--first-party "$CP_FIRST_PARTY"); fi
+        rm -f "$CP_REPORT"
+        set +e
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}"
+        code=$?
+        set -e
+        if [ -f "$CP_REPORT" ]; then cat "$CP_REPORT" >> "$GITHUB_STEP_SUMMARY"; fi
+        exit $code
