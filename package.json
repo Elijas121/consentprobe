@@ -2,6 +2,7 @@
   "name": "consentprobe",
   "version": "0.1.0",
   "description": "Measure what a website really does before, and after, a visitor answers the cookie banner. Technical findings for GDPR/TDDDG work, not legal advice.",
+  "author": "Elias Delil",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -18,6 +19,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
