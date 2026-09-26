@@ -53,10 +53,19 @@ export function findingsForRequests(
     }
   }
 
+  // Hosts that are reported under a rule of their own, e.g. the frame of a video player or a map.
+  // Font and CDN rules do not count: they are the requests that may be dropped below.
+  const reportedHosts = new Set(
+    [...byRule.values()].filter((e) => e.rule.category !== "fonts" && e.rule.category !== "cdn").flatMap((e) => e.reqs.map((r) => r.host)),
+  );
   for (const { rule, reqs: all } of byRule.values()) {
     // Fonts or CDN files that an embedded third-party frame (a video player, a map, a captcha) loads for
-    // itself are not the site's own fonts: the site cannot self-host them. The embed is reported on its own.
-    const reqs = rule.category === "fonts" || rule.category === "cdn" ? all.filter((r) => !r.embeddedIn) : all;
+    // itself are not the site's own fonts: the site cannot self-host them. They are dropped only when the
+    // embed itself is reported; an embed without a rule of its own would otherwise hide the transfer.
+    const reqs =
+      rule.category === "fonts" || rule.category === "cdn"
+        ? all.filter((r) => !r.embeddedIn || !reportedHosts.has(r.embeddedIn))
+        : all;
     if (reqs.length === 0) continue;
     // Google's Consent Mode "denied" pings are judged like after a reject: a separate, disputed warning.
     const pings = reqs.filter(isDeniedPing);

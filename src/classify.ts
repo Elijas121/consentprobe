@@ -31,8 +31,15 @@ const OPERATORS: { name: string; domain: RegExp }[] = [
   { name: "TikTok", domain: /^(tiktok\.com|tiktokcdn\.com|tiktokcdn-eu\.com|ttwstatic\.com)$/ },
 ];
 
+/**
+ * Pages these companies host for their customers (a blog on wordpress.com, a Google Site): the site
+ * operator is the customer, so the company's trackers are third parties there.
+ */
+const CUSTOMER_HOSTED = /^(sites\.google\.com|script\.google\.com|(?!www\.)[^.]+\.wordpress\.com|[^.]+\.blogspot\.com)$/i;
+
 /** The company that runs both domains, if they differ but belong to the same one of the companies above. */
 export function sharedOperator(requestHost: string, pageHost: string): string | undefined {
+  if (CUSTOMER_HOSTED.test(pageHost)) return undefined;
   const a = registrableDomain(requestHost);
   const b = registrableDomain(pageHost);
   if (a === b) return undefined;

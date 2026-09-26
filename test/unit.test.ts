@@ -35,6 +35,10 @@ describe("classify", () => {
     expect(isThirdParty("upload.wikimedia.org", "en.wikipedia.org")).toBe(false);
     expect(isThirdParty("fonts.gstatic.com", "www.bakery.example")).toBe(true);
     expect(isThirdParty("www.google-analytics.com", "someone.blogspot.com")).toBe(true);
+    expect(isThirdParty("www.google-analytics.com", "sites.google.com")).toBe(true);
+    expect(isThirdParty("stats.wp.com", "myblog.wordpress.com")).toBe(true);
+    expect(isThirdParty("stats.wp.com", "wordpress.com")).toBe(false);
+    expect(isThirdParty("s0.wp.com", "www.wordpress.com")).toBe(false);
     expect(isThirdParty("d1.cloudfront.net", "www.amazon.de")).toBe(true);
     expect(isThirdParty("fonts.gstatic.com", "evil-google.com")).toBe(true);
     expect(isThirdParty("fonts.gstatic.com", "google.xyz")).toBe(true);
@@ -265,14 +269,21 @@ describe("request classification details", () => {
       [
         { url: "https://fonts.gstatic.com/s/roboto/a.woff2", resourceType: "font", frameUrl: "https://www.youtube-nocookie.com/embed/x" },
         { url: "https://fonts.gstatic.com/s/roboto/b.woff2", resourceType: "font", frameUrl: "https://www.shop.example/" },
+        { url: "https://www.youtube-nocookie.com/embed/x", resourceType: "document", frameUrl: "https://www.youtube-nocookie.com/embed/x" },
+        { url: "https://fonts.gstatic.com/s/roboto/c.woff2", resourceType: "font", frameUrl: "https://widget.booking.example/w" },
       ],
       "www.shop.example",
     );
     expect(r[0]?.embeddedIn).toBe("www.youtube-nocookie.com");
     expect(r[1]?.embeddedIn).toBeUndefined();
-    const embeddedOnly = findingsForRequests([r[0]!]);
-    expect(embeddedOnly.find((f) => f.id === "third-party-before-consent:google-fonts")).toBeUndefined();
-    expect(findingsForRequests(r).find((f) => f.id === "third-party-before-consent:google-fonts")?.message).toContain("1 request(s)");
+    // The player is reported as YouTube, so the fonts it loads for itself are not the site's.
+    const player = findingsForRequests([r[0]!, r[2]!]);
+    expect(player.find((f) => f.id === "third-party-before-consent:google-fonts")).toBeUndefined();
+    expect(player.find((f) => f.id === "third-party-before-consent:youtube")).toBeDefined();
+    expect(findingsForRequests([r[0]!, r[1]!, r[2]!]).find((f) => f.id === "third-party-before-consent:google-fonts")?.message).toContain("1 request(s)");
+    // A widget without a rule of its own is not reported anywhere: its fonts stay visible, marked as embedded.
+    const widget = findingsForRequests([r[3]!]).find((f) => f.id === "third-party-before-consent:google-fonts");
+    expect(widget?.message).toContain("widget.booking.example");
   });
   it("finds Austrian and older German imprint wording and treats a lone Kontakt link as uncertain", () => {
     expect(findLegalLinks([{ href: "https://e.at/offenlegung", text: "Offenlegung", inFooter: true }]).imprint.found).toBe(true);
@@ -316,6 +327,10 @@ describe("bot-challenge pages", () => {
     expect(looksLikeChallenge(page)).toBe(false);
     expect(looksLikeChallenge({ ...page, title: "Just a moment: our story", textLength: 20000, links: 80 })).toBe(false);
     expect(looksLikeChallenge({ ...page, title: "Access denied – what the court said", textLength: 5000 })).toBe(false);
+    // Small ordinary pages with generic titles are no bot check.
+    for (const title of ["Security Check – Ihre Heizung im Herbst", "One more step to your offer", "Please verify your e-mail"]) {
+      expect(looksLikeChallenge({ ...page, title }), title).toBe(false);
+    }
   });
 });
 
@@ -435,8 +450,37 @@ describe("time limits", () => {
 describe("legal link check", () => {
   const ctx = (statuses: number[]) => {
     let i = 0;
-    return { request: { get: async () => ({ status: () => statuses[Math.min(i++, statuses.length - 1)] ?? 0 }) } };
+    return { request: { get: async () => ({ status: () => statuses[Math.min(i++, statuses.length - 1)] ?? 0, headers: () => ({}) }) } };
   };
+  /** A server that answers each URL with a fixed status and optional redirect target; records what was asked. */
+  const site = (routes: Record<string, [number, string?]>) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      request: {
+        get: async (url: string) => {
+          asked.push(url);
+          const [status, location] = routes[url] ?? [404];
+          return { status: () => status, headers: (): Record<string, string> => (location ? { location } : {}) };
+        },
+      },
+    };
+  };
+  it("follows redirects by hand and never into the local network", async () => {
+    const ok = site({ "https://e.de/ds": [301, "/datenschutz/"], "https://e.de/datenschutz/": [200] });
+    expect(await checkLink(ok, "https://e.de/ds", 30000, 1)).toBe(200);
+    const evil = site({ "https://e.de/ds": [302, "http://169.254.169.254/latest/meta-data/"] });
+    expect(await checkLink(evil, "https://e.de/ds", 30000, 1)).toBeUndefined();
+    expect(evil.asked).toEqual(["https://e.de/ds"]);
+    const direct = site({});
+    expect(await checkLink(direct, "http://127.0.0.1:8080/impressum", 30000, 1)).toBeUndefined();
+    expect(direct.asked).toEqual([]);
+    // A dev server the user typed may have its own legal pages checked.
+    const dev = site({ "http://localhost:3000/impressum": [200] });
+    expect(await checkLink(dev, "http://localhost:3000/impressum", 30000, 1, true)).toBe(200);
+    const loop = site({ "https://e.de/a": [302, "/b"], "https://e.de/b": [302, "/a"] });
+    expect(await checkLink(loop, "https://e.de/a", 30000, 1)).toBeUndefined();
+  });
   it("retries a transient server error and keeps the second answer", async () => {
     expect(await checkLink(ctx([502, 200]), "https://e.de/d", 30000, 1)).toBe(200);
   });
@@ -452,7 +496,7 @@ describe("legal link check", () => {
     expect(await checkLink(ctx([410]), "https://e.de/d", 30000, 1)).toBe(410);
   });
   it("recognizes hosts on the machine or the local network", () => {
-    for (const h of ["localhost", "a.localhost", "intranet", "127.0.0.1", "10.1.2.3", "169.254.169.254", "172.20.0.1", "192.168.1.1", "100.64.0.1", "[::1]", "fd00::1", "fe80::1"]) {
+    for (const h of ["localhost", "localhost.", "a.localhost", "intranet", "nas.local", "db.internal", "127.0.0.1", "10.1.2.3", "169.254.169.254", "172.20.0.1", "192.168.1.1", "100.64.0.1", "[::1]", "[::]", "fd00::1", "fe80::1", "64:ff9b::a9fe:a9fe"]) {
       expect(isLocalHost(h), h).toBe(true);
     }
     for (const h of ["example.com", "8.8.8.8", "172.32.0.1", "2001:db8::1"]) expect(isLocalHost(h), h).toBe(false);

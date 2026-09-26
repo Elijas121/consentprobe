@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { chromium } from "playwright";
+import { newBudget } from "../src/bounded.js";
+import { CANDIDATE_LABEL, changedLabel } from "../src/consent.js";
 import { scan } from "../src/scan.js";
 import { startFixtures, type Fixtures } from "./fixtures.js";
 
@@ -222,6 +225,24 @@ describe("consent click test (real browser)", () => {
     }
   });
 
+  it("finds controls in a sticky button row inside the banner, and text split across web components", async () => {
+    for (const path of ["/banner-sticky-buttons", "/banner-shadow-split"]) {
+      const r = await scan(`${fx.origin}${path}`, opts());
+      expect(r.consent?.banner, path).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+      expect(r.consent?.reject?.control?.label, path).toBe("Ablehnen");
+      expect(r.consent?.reject?.clicked, path).toBe(true);
+      expect(r.consent?.accept?.clicked, path).toBe(true);
+    }
+  });
+
+  it("never takes a video content blocker in the page for the banner", async () => {
+    const r = await scan(`${fx.origin}/video-placeholder-late-banner`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+    expect(find(r, "no-reject-control-on-first-layer")).toBeUndefined();
+  });
+
   it("finds the banner's link controls behind many matching links in the page", async () => {
     const r = await scan(`${fx.origin}/banner-many-links`, opts());
     expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
@@ -259,5 +280,23 @@ describe("consent click test (real browser)", () => {
   it("skips the click visits when clickTest is off", async () => {
     const r = await scan(`${fx.origin}/banner-good`, { ...opts(), clickTest: false });
     expect(r.consent).toBeUndefined();
+  });
+});
+
+describe("label check before the click (real browser)", () => {
+  it("notices when a re-rendered banner put another control at the judged position", async () => {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<div role="dialog"><p>Wir verwenden Cookies.</p><button>Alle ablehnen</button><button>Alle akzeptieren</button></div>`);
+      const locator = page.getByRole("button", { name: CANDIDATE_LABEL }).nth(0);
+      const target = { locator, frame: page.mainFrame(), control: { label: "Alle ablehnen", method: "text" as const } };
+      expect(await changedLabel(target, newBudget())).toBeUndefined();
+      // The banner re-renders: the reject control is gone, the accept control moves to its position.
+      await page.evaluate(() => document.querySelector("button")?.remove());
+      expect(await changedLabel(target, newBudget())).toBe("Alle akzeptieren");
+    } finally {
+      await browser.close();
+    }
   });
 });

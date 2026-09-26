@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatMarkdown, formatText } from "../src/report.js";
+import { formatJson, formatMarkdown, formatText } from "../src/report.js";
 import type { ScanResult } from "../src/types.js";
 
 describe("markdown report escaping", () => {
@@ -56,5 +56,15 @@ describe("markdown report escaping", () => {
     const txt = formatText(r);
     expect(txt).toContain(`reject: found ("${label}")`);
     expect(txt).toContain("recognized (<i>CMP</i>)");
+  });
+});
+
+describe("json output", () => {
+  it("escapes bidi overrides and C1 controls from the page, and stays the same data", () => {
+    const data = { label: "Alle \u202Eneh\u202C ablehnen\u009B31m", url: "https://e.de/\u2028x" };
+    const out = formatJson(data);
+    expect(out).not.toMatch(/[\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/);
+    expect(out).toContain("\\u202e");
+    expect(JSON.parse(out)).toEqual(data);
   });
 });

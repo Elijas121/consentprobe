@@ -94,10 +94,16 @@ describe("scan (real browser)", () => {
   });
 
   it("does not blame the site for fonts that an embedded third-party frame loads for itself", async () => {
-    const fonts = { ...opts(), extraRules: [{ id: "test-fonts", name: "Test Fonts", category: "fonts" as const, hosts: [fx.thirdPartyHost], pathPrefix: "/font.woff2" }] };
+    const fontRule = { id: "test-fonts", name: "Test Fonts", category: "fonts" as const, hosts: [fx.thirdPartyHost], pathPrefix: "/font.woff2" };
+    const playerRule = { id: "test-player", name: "Test Player", category: "video" as const, hosts: [fx.thirdPartyHost], pathPrefix: "/embed-frame" };
+    const fonts = { ...opts(), extraRules: [fontRule, playerRule] };
     const embedded = await scan(`${fx.origin}/embed-font`, fonts);
     expect(ids(embedded)).not.toContain("third-party-before-consent:test-fonts");
+    expect(ids(embedded)).toContain("third-party-before-consent:test-player");
     expect(embedded.requests.some((q) => q.url.endsWith("/font.woff2") && q.embeddedIn === fx.thirdPartyHost)).toBe(true);
+    // An embed without a rule of its own is not reported, so its fonts must not vanish with it.
+    const unknownEmbed = await scan(`${fx.origin}/embed-font`, { ...opts(), extraRules: [fontRule] });
+    expect(unknownEmbed.findings.find((f) => f.id === "third-party-before-consent:test-fonts")?.message).toContain("embedded frame");
     const own = await scan(`${fx.origin}/page-font`, fonts);
     expect(ids(own)).toContain("third-party-before-consent:test-fonts");
   });
@@ -129,6 +135,11 @@ describe("scan (real browser)", () => {
     const r = await scan(`${withLogin}/protected`, opts());
     expect(r.url).toBe(`${fx.origin}/protected`);
     expect(JSON.stringify(r)).not.toContain("secret");
+    // The token in the imprint link stays out of the result, including the finding that quotes the link.
+    expect(r.findings.map((f) => f.id)).toContain("imprint-link-not-in-footer");
+    expect(JSON.stringify(r)).not.toContain("abc123");
+    // The credentials belong to the typed origin; a third party that asks for a login gets nothing.
+    expect(fx.thirdPartySawCredentials()).toBe(false);
     expect(r.legal.imprint.href).toBe(`${fx.origin}/impressum`);
     expect(r.legal.privacy.href).toBe(`${fx.origin}/datenschutz`);
   });
@@ -174,6 +185,10 @@ describe("scan (real browser)", () => {
     expect(r.legal.privacy).toMatchObject({ found: true, scripted: true });
     expect(ids(r)).not.toContain("imprint-link-missing");
     expect(r.findings.find((f) => f.id === "imprint-link-unverified")?.message).toContain("scripted element");
+    // The page-side search uses the same label list as the link search, so no wording is known in one place only.
+    const at = await scan(`${fx.origin}/legal-scripted-at`, opts());
+    expect(at.legal.imprint).toMatchObject({ found: true, scripted: true });
+    expect(at.legal.privacy).toMatchObject({ found: true, scripted: true });
   });
 
   it("still reports a missing imprint when the word is only plain text", async () => {

@@ -11,7 +11,7 @@ Runs a real browser against a URL in three isolated visits (baseline, reject cli
 
 - The user wants a pre-launch or pre-delivery privacy check of a website.
 - The user asks whether a site tracks before consent or whether "reject" works.
-- Scan sites the user owns, operates or has permission to check. Exception: one scan of a competitor's public page is acceptable when the user asks about its public behavior; a scan is three visits of that page plus up to two requests for its legal pages, like a few visitors, not a crawl. Never scan many competitor sites in bulk, and never publish results about a site or company the user does not own or operate (not in repos, issues, posts or public CI summaries).
+- Scan sites the user owns, operates or has permission to check. Exception: one scan of a competitor's public page is acceptable when the user asks about its public behavior; a scan is three to four visits of that page (one is repeated when a banner showed up late) plus a few requests for its two legal pages, like a few visitors, not a crawl. Never scan many competitor sites in bulk, and never publish results about a site or company the user does not own or operate (not in repos, issues, posts or public CI summaries).
 
 ## How to run it
 

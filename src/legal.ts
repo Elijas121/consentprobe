@@ -27,6 +27,9 @@ const PRIVACY: Kind = {
   path: /\/(datenschutz\w*|privacy\w*|data-protection|protection-des-donnees|confidentialite|politique-de-confidentialite|protezione-dei-dati)([/.\-_?#]|$)/i,
 };
 
+/** Sources of the exact labels, for the page-side search of scripted legal items (page code cannot import). */
+export const EXACT_LEGAL_LABELS: string[] = [IMPRINT.exact.source, PRIVACY.exact.source];
+
 const MAX_LABEL = 40;
 /**
  * Label 3 + path 2 + footer 3, or an exact standard label alone (5). At least 5 points count

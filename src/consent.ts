@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Browser, Frame, Locator, Page } from "playwright";
 import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
-import { applyIdentity, visitorContextOptions, type VisitorIdentity } from "./identity.js";
+import { applyIdentity, visitorContextOptions, type HttpCredentials, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
 import { recordRequests, type RawRequest } from "./record.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
@@ -109,7 +109,8 @@ const MAX_LABEL = 50;
  * True when the element sits in a real overlay (fixed or sticky ancestor, or a dialog), or in a
  * container the site itself names as its cookie or consent UI (id, class or tag name), such as a
  * consent bar at the top of the page that pushes the content down instead of floating over it.
- * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked.
+ * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked, and
+ * neither do content blockers: the "load this video / map" placeholders that consent tools put in the page.
  */
 const isOverlayElement = (el: Element): boolean => {
   // Walk out of shadow roots too: some banners live in a web component.
@@ -123,7 +124,7 @@ const isOverlayElement = (el: Element): boolean => {
       return true;
     }
     // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
-    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
       if (((n as HTMLElement).innerText || "").length < 4000) return true;
     }
   }
@@ -150,17 +151,34 @@ const isChoicePart = (el: Element): boolean =>
 const hasConsentContext = (el: Element): boolean => {
   const words = /cookie|consent|einwillig|zustimm|datenschutz|privacy|privatsph|tracking|partner|personalis|confidentialit|donn[ée]es personnelles|riservatezza|privacidad|toestemming|prywatno/i;
   const up = (x: Element): Element | null => x.parentElement ?? ((x.getRootNode() as { host?: Element }).host ?? null);
+  // innerText leaves out open shadow roots; banners built from nested web components keep their text there.
+  const deepText = (x: Element): string => {
+    let text = (x as HTMLElement).innerText || "";
+    const hosts = [x, ...Array.from(x.querySelectorAll("*"))].filter((e) => e.shadowRoot);
+    for (const host of hosts.slice(0, 20)) {
+      for (const child of Array.from(host.shadowRoot?.children ?? [])) {
+        if (child.tagName !== "STYLE" && child.tagName !== "SCRIPT") text += ` ${deepText(child)}`;
+      }
+    }
+    return text;
+  };
+  const isOverlayBox = (x: Element): boolean => {
+    const position = getComputedStyle(x).position;
+    const role = x.getAttribute("role");
+    return position === "fixed" || position === "sticky" || role === "dialog" || role === "alertdialog" || x.getAttribute("aria-modal") === "true" || x.tagName === "DIALOG";
+  };
+  const outerOverlay = (x: Element): boolean => {
+    for (let o = up(x); o && o.tagName !== "BODY"; o = up(o)) if (isOverlayBox(o)) return true;
+    return false;
+  };
   let n: Element | null = up(el);
-  for (let depth = 0; n && n.tagName !== "BODY" && depth < 12; depth += 1, n = up(n)) {
-    const text = (n as HTMLElement).innerText || "";
+  for (let depth = 0; n && n.tagName !== "BODY" && depth < 16; depth += 1, n = up(n)) {
+    const text = deepText(n);
     if (text.length > 6000) return false;
     if (words.test(text)) return true;
     // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
-    const position = getComputedStyle(n).position;
-    const role = n.getAttribute("role");
-    if (position === "fixed" || position === "sticky" || role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
-      return false;
-    }
+    // A sticky button row or a fixed toolbar inside the prompt is not the whole prompt: keep walking to it.
+    if (isOverlayBox(n) && !outerOverlay(n)) return false;
   }
   return false;
 };
@@ -195,6 +213,15 @@ async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<strin
   return (text || aria || value).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The control's current label if it is no longer the one that was judged, else undefined. Controls
+ * are found by position; a banner that re-renders can put another element at that position.
+ */
+export async function changedLabel(target: Pick<Found, "locator" | "frame" | "control">, q: QueryBudget): Promise<string | undefined> {
+  const now = await labelOf(target.locator, q, target.frame);
+  return normalizeLabel(now) === normalizeLabel(target.control.label) ? undefined : now;
+}
+
 async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
   for (const frame of page.frames()) {
     const locator = frame.locator(selector).first();
@@ -222,7 +249,7 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
       // Same rule as isOverlayElement: a container the site names as its cookie or consent UI.
-      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
         if (((n as HTMLElement).innerText || "").length < 4000) return true;
       }
     }
@@ -266,7 +293,7 @@ function overlayIndices(els: Element[], max: number): number[] {
       if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
-      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
         if (((n as HTMLElement).innerText || "").length < 4000) return true;
       }
     }
@@ -417,7 +444,7 @@ export interface SessionOptions {
   screenshotDir?: string;
   identity?: VisitorIdentity;
   /** Basic-auth credentials from the URL (password-protected test sites). */
-  httpCredentials?: { username: string; password: string };
+  httpCredentials?: HttpCredentials;
 }
 
 async function shot(page: Page, dir: string | undefined, name: string): Promise<void> {
@@ -482,8 +509,8 @@ export async function runConsentSession(
     // The control is found by position; if the page re-rendered since, that position may hold another
     // element now. Only click when the label is still the one that was judged.
     if (target.control.method === "text") {
-      const now = await labelOf(target.locator, q, target.frame);
-      if (normalizeLabel(now) !== normalizeLabel(target.control.label)) {
+      const now = await changedLabel(target, q);
+      if (now !== undefined) {
         session.error = `click skipped: the control changed before the click (now "${now.slice(0, 40)}")`;
         await shot(page, o.screenshotDir, `${action}-0-control-changed.png`);
         return { banner, session };

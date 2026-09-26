@@ -20,6 +20,14 @@ export function plain(text: string): string {
   return text.replace(UNSAFE, " ");
 }
 
+/**
+ * JSON output keeps page text as it is, but writes the characters above as \u escapes, so a terminal
+ * or log viewer that shows the raw JSON does not interpret them. JSON.stringify already escapes C0.
+ */
+export function formatJson(result: unknown): string {
+  return JSON.stringify(result, null, 2).replace(/[\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 function escapeMarkdown(text: string): string {
   return plain(text).replace(MARKDOWN_SPECIAL, "\\$1");
 }

@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { normalizeUrlInput, parseMs, parseRules } from "./input.js";
-import { formatMarkdown, formatText, plain } from "./report.js";
+import { formatJson, formatMarkdown, formatText, plain } from "./report.js";
 import { scan } from "./scan.js";
 import { VERSION } from "./version.js";
 import type { ScanOptions, Severity } from "./types.js";
@@ -26,7 +26,8 @@ Options:
   --banner-wait <ms>        How long to wait for a banner to appear (default: 4000)
   --screenshots <dir>       Save evidence screenshots before/after each banner click
   --first-party <domain>    Extra domain of the site operator, e.g. its asset CDN (repeatable)
-  --imprint <auto|always|never>  German rules: auto = German-language or .de/.at/.ch sites;
+  --imprint <auto|always|never>  German rules: auto = German page language, a .de/.at/.li domain,
+                            or a .ch domain without another page language;
                             always = force them (imprint check, missing privacy link is an error);
                             never = no imprint check (default: auto)
   --rules <file>            JSON file with extra tracker rules
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
     return fail(err instanceof Error ? err.message : String(err));
   }
 
-  const output = format === "json" ? JSON.stringify(result, null, 2) : format === "md" ? formatMarkdown(result) : formatText(result);
+  const output = format === "json" ? formatJson(result) : format === "md" ? formatMarkdown(result) : formatText(result);
   if (values.out) {
     try {
       await mkdir(dirname(values.out), { recursive: true });

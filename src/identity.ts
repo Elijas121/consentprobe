@@ -66,10 +66,17 @@ export async function visitorIdentity(browser: Browser): Promise<VisitorIdentity
   }
 }
 
+/** Basic-auth login from the typed URL, bound to that URL's origin. */
+export interface HttpCredentials {
+  username: string;
+  password: string;
+  origin: string;
+}
+
 /** Options for a fresh visitor context: German locale and, if needed, the regular user agent. */
 export function visitorContextOptions(
   identity?: VisitorIdentity,
-  httpCredentials?: { username: string; password: string },
+  httpCredentials?: HttpCredentials,
 ): BrowserContextOptions {
   return {
     locale: "de-DE",

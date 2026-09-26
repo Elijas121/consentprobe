@@ -7,7 +7,7 @@ i=0
 # "|| [ -n "$u" ]" keeps the last URL of a file without a trailing newline.
 while IFS= read -r u || [ -n "$u" ]; do
   [ -z "$u" ] && continue
-  n=$(echo "$u" | sed -E 's#^https?://##; s#/.*##')
+  n=$(echo "$u" | sed -E 's#^https?://##; s#/.*##; s#^.*@##')
   # Two URLs on the same host must not overwrite each other's results.
   if [ -e "$2/$n.json" ]; then n="$n-$(printf '%s' "$u" | cksum | cut -d' ' -f1)"; fi
   node dist/cli.js "$u" --fail-on never --timeout 45000 --format json --screenshots "$2/shots/$n" > "$2/$n.json" 2> "$2/$n.err" &

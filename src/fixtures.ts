@@ -50,11 +50,21 @@ export interface Fixtures {
   origin: string;
   /** Third-party host used by the tracked page (hostname "127.0.0.1"). */
   thirdPartyHost: string;
+  /** True once the third-party server received an Authorization header. */
+  thirdPartySawCredentials: () => boolean;
   close: () => Promise<void>;
 }
 
 export async function startFixtures(): Promise<Fixtures> {
+  let thirdPartyAuthorization = false;
   const third = createServer((req, res) => {
+    if (req.headers.authorization) thirdPartyAuthorization = true;
+    if (req.url?.startsWith("/auth-probe")) {
+      // A third party that asks every visitor for a login: it must never get the credentials of the scanned site.
+      res.writeHead(401, { "www-authenticate": 'Basic realm="tracker"', "content-type": "text/html" });
+      res.end();
+      return;
+    }
     if (req.url?.startsWith("/stall")) {
       // A third-party widget whose server never answers. Playwright's isVisible()/count() on this
       // frame wait forever; this is what made real scans hang.
@@ -219,6 +229,19 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/banner-shadow":
         // The banner's content lives in the open shadow root of a web component inside a fixed host.
         return html(200, page(`<h1>Shadow</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff"><cookie-box></cookie-box></div><script>customElements.define('cookie-box', class extends HTMLElement { connectedCallback() { const r = this.attachShadow({ mode: 'open' }); r.innerHTML = '<div><p>Wir verwenden Cookies.</p><button id="rej">Alle ablehnen</button><button id="acc">Alle akzeptieren</button></div>'; r.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => document.getElementById('banner').remove())); } });</script>`));
+      case "/banner-sticky-buttons":
+        // The consent text sits in a fixed banner; the buttons sit in a sticky row of their own inside it (Termly).
+        return html(200, page(`<h1>Sticky</h1>${FOOTER}<div id="banner" role="region" style="position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow:auto;background:#fff"><div><p>Wir verwenden Cookies, um die Website zu verbessern.</p><div style="position:sticky;bottom:0;background:#eee"><button id="rej">Ablehnen</button><button id="acc">Akzeptieren</button></div></div></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/banner-shadow-split":
+        // The text and the buttons live in two sibling web components inside a third one: no single innerText holds both.
+        return html(200, page(`<h1>Split</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff"><cmp-root></cmp-root></div><script>
+          customElements.define('cmp-text', class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<p>Wir verwenden Cookies.</p>'; } });
+          customElements.define('cmp-buttons', class extends HTMLElement { connectedCallback() { const r = this.attachShadow({ mode: 'open' }); r.innerHTML = '<div><button>Ablehnen</button><button>Akzeptieren</button></div>'; r.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => document.getElementById('banner').remove())); } });
+          customElements.define('cmp-root', class extends HTMLElement { connectedCallback() { this.attachShadow({ mode: 'open' }).innerHTML = '<style>.cookie{}</style><div><cmp-text></cmp-text><cmp-buttons></cmp-buttons></div>'; } });
+        </script>`));
+      case "/video-placeholder-late-banner":
+        // A consent tool's content blocker in the page ("load this video") comes first in the DOM; the real banner renders later.
+        return html(200, page(`<h1>Videos</h1><div class="video-consent"><p>Mit dem Laden des Videos akzeptieren Sie die Datenschutzerklärung von YouTube.</p><button type="button">Akzeptieren</button></div>${FOOTER}`, `<script>setTimeout(function(){var d=document.createElement('div');d.id='banner';d.setAttribute('role','dialog');d.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem';d.innerHTML='<p>Wir verwenden Cookies.</p><button id="rej">Alle ablehnen</button><button id="acc">Alle akzeptieren</button>';document.body.appendChild(d);d.querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){d.remove();});});},1500);</script>`));
       case "/banner-many-links": {
         // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
         const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");
@@ -231,7 +254,8 @@ export async function startFixtures(): Promise<Fixtures> {
         // A password-protected test site (HTTP basic auth, user "test", password "secret").
         const ok = req.headers.authorization === `Basic ${Buffer.from("test:secret").toString("base64")}`;
         if (!ok) return html(401, "<h1>Login</h1>", { "www-authenticate": 'Basic realm="staging"' });
-        return html(200, page(`<h1>Staging</h1><footer><a href="/impressum?session=abc123">Impressum</a> <a href="/datenschutz#top">Datenschutz</a></footer>`));
+        // The imprint link sits outside the footer, so a finding quotes it; its session token must not show there.
+        return html(200, page(`<h1>Staging</h1><p><a href="/impressum?session=abc123">Impressum</a></p><iframe src="${thirdOrigin}/auth-probe" title="widget"></iframe><div style="height:2000px"></div><footer><a href="/datenschutz#top">Datenschutz</a></footer>`));
       }
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
@@ -259,6 +283,9 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/legal-scripted":
         // Page-builder footer: clickable headings whose URL is set by a script, no href anywhere.
         return html(200, page(`<h1>Scripted legal</h1><footer><div class="blurb" style="cursor:pointer" onclick="location.href='/impressum'"><h6 tabindex="-1">Impressum</h6></div><div class="blurb" style="cursor:pointer" onclick="location.href='/datenschutz'"><h6 tabindex="-1">Datenschutz</h6></div></footer>`));
+      case "/legal-scripted-at":
+        // The same, with the Austrian and Swiss-French wording the link search knows too.
+        return html(200, page(`<h1>Scripted legal</h1><footer><div class="blurb" style="cursor:pointer" onclick="location.href='/impressum'"><h6 tabindex="-1">Offenlegung</h6></div><div class="blurb" style="cursor:pointer" onclick="location.href='/datenschutz'"><h6 tabindex="-1">Protection des données</h6></div></footer>`));
       case "/legal-text-only":
         // The words appear, but nothing can be clicked: there is no link.
         return html(200, page(`<h1>Text only</h1><footer><p>Impressum</p><p>Datenschutz</p></footer>`));
@@ -277,6 +304,7 @@ export async function startFixtures(): Promise<Fixtures> {
   return {
     origin: `http://localhost:${firstPort}`,
     thirdPartyHost: "127.0.0.1",
+    thirdPartySawCredentials: () => thirdPartyAuthorization,
     close: () =>
       new Promise((resolve) => {
         first.close(() => third.close(() => resolve()));

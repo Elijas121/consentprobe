@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { chromium, type Browser } from "playwright";
 import { locateControls, runConsentSession, type SessionOptions } from "./consent.js";
 import { bounded, newBudget } from "./bounded.js";
-import { applyIdentity, visitorContextOptions, visitorIdentity, type VisitorIdentity } from "./identity.js";
+import { applyIdentity, visitorContextOptions, visitorIdentity, type HttpCredentials, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
 import { BUILT_IN_RULES } from "./rules.js";
 import {
@@ -15,7 +15,7 @@ import {
   findingsForRequests,
   type ImprintMode,
 } from "./findings.js";
-import { findLegalLinks, type RawAnchor } from "./legal.js";
+import { EXACT_LEGAL_LABELS, findLegalLinks, type RawAnchor } from "./legal.js";
 import { recordRequests, type RawRequest } from "./record.js";
 import { PLAYWRIGHT_VERSION, VERSION } from "./version.js";
 import type {
@@ -53,7 +53,8 @@ export class PageChallengedError extends Error {
 export function looksLikeChallenge(p: { url: string; title: string; markers: number; textLength: number; links: number }): boolean {
   const small = p.textLength < 3000 && p.links < 30;
   const url = /[?&](js_challenge|__cf_chl_[a-z_]*|cf_chl_[a-z_]*)=/i.test(p.url);
-  const title = /^(just a moment|nur einen moment|einen moment bitte|attention required|access denied|pardon our interruption|please verify|verify you are (a )?human|are you a robot|checking your browser|one more step|security check|ddos-guard)/i.test(p.title.trim());
+  // Only the titles of the bot-check vendors themselves; generic words ("Security check") also title normal small pages.
+  const title = /^(just a moment|nur einen moment|attention required! \| cloudflare|pardon our interruption|verify you are (a )?human|are you a robot|checking your browser|ddos-guard)/i.test(p.title.trim());
   return small && (url || title || p.markers > 0);
 }
 
@@ -115,32 +116,52 @@ const GONE = new Set([404, 410]);
  * must not make consentprobe request those, e.g. a cloud metadata address in a CI runner.
  */
 export function isLocalHost(host: string): boolean {
-  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
-  if (h === "localhost" || h.endsWith(".localhost") || !h.includes(".") && !h.includes(":")) return true;
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (h === "localhost" || /\.(localhost|local|internal|lan|home\.arpa)$/.test(h) || !h.includes(".") && !h.includes(":")) return true;
   const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (v4) {
     const [a, b] = [Number(v4[1]), Number(v4[2])];
     return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
   }
-  return h === "::1" || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h) || h.startsWith("::ffff:");
+  return h === "::" || h === "::1" || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h) || h.startsWith("::ffff:") || h.startsWith("64:ff9b:");
 }
 
 /**
  * HTTP status of a legal page. A transient status gets one retry; if it stays transient the link
  * counts as unverified (undefined), because a short server hiccup must not become "link broken".
  * Refusals (401, 403 …) are unverified too: only 404 and 410, or a success, are reported.
+ * Redirects are followed by hand, so a page cannot bounce the check into the local network.
  */
 export async function checkLink(
-  context: { request: { get: (url: string, o: { timeout: number; failOnStatusCode: boolean }) => Promise<{ status(): number }> } },
+  context: {
+    request: {
+      get: (url: string, o: { timeout: number; failOnStatusCode: boolean; maxRedirects: number }) => Promise<{ status(): number; headers(): Record<string, string> }>;
+    };
+  },
   href: string,
   timeoutMs: number,
   retryDelayMs = 1500,
+  allowLocal = false,
 ): Promise<number | undefined> {
-  const get = () =>
-    context.request
-      .get(href, { timeout: Math.min(timeoutMs, 20000), failOnStatusCode: false })
-      .then((r) => r.status())
-      .catch(() => undefined);
+  const get = async (): Promise<number | undefined> => {
+    let target = href;
+    for (let hop = 0; hop <= 5; hop += 1) {
+      if (!allowLocal && isLocalHost(new URL(target).hostname)) return undefined;
+      const r = await context.request
+        .get(target, { timeout: Math.min(timeoutMs, 20000), failOnStatusCode: false, maxRedirects: 0 })
+        .catch(() => undefined);
+      if (!r) return undefined;
+      const status = r.status();
+      const location = r.headers().location;
+      if (status < 300 || status >= 400 || !location) return status;
+      try {
+        target = new URL(location, target).href;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  };
   let status = await get();
   if (status !== undefined && TRANSIENT.has(status)) {
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
@@ -177,7 +198,7 @@ async function runBaseline(
   screenshotDir?: string,
   identity?: VisitorIdentity,
   bannerWaitMs = 0,
-  httpCredentials?: { username: string; password: string },
+  httpCredentials?: HttpCredentials,
 ): Promise<Baseline> {
   // A fresh context has no cookies or storage: it behaves like a first-time visitor.
   const context = await browser.newContext(visitorContextOptions(identity, httpCredentials));
@@ -203,7 +224,7 @@ async function runBaseline(
       page.evaluate(() => ({
         title: document.title,
         markers: document.querySelectorAll(
-          "#challenge-form, #challenge-running, #cf-challenge-running, .cf-browser-verification, #px-captcha, iframe[src*='captcha-delivery.com']",
+          "form#challenge-form[action*='__cf_chl'], #challenge-running, #cf-challenge-running, .cf-browser-verification, script[src*='/cdn-cgi/challenge-platform/'], #px-captcha, iframe[src*='captcha-delivery.com']",
         ).length,
         textLength: (document.body?.innerText || "").length,
         links: document.querySelectorAll("a[href]").length,
@@ -217,7 +238,7 @@ async function runBaseline(
     const pageHost = new URL(finalUrl).hostname;
     const consentWall = isConsentWallRedirect(url, finalUrl);
 
-    const anchors: RawAnchor[] = await bounded(page.evaluate(() =>
+    const anchors: RawAnchor[] = await bounded(page.evaluate((exactLabels: string[]) =>
       Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).map((a) => ({
         href: a.href,
         // innerText is empty for footers that render lazily (content-visibility); a link that takes up
@@ -240,7 +261,8 @@ async function runBaseline(
             if (el.closest("a[href]")) return false;
             const text = (el.textContent || "").replace(/\s+/g, " ").trim();
             if (!text || text.length > 40) return false;
-            if (!/^(impressum|imprint|legal notice|anbieterkennung|datenschutz(erklärung|erklaerung|hinweise|bestimmungen|richtlinie)?|privacy( policy| notice| statement)?|data protection( policy| notice)?)[.:]?$/i.test(text)) return false;
+            const label = text.replace(/[.:]+$/, "");
+            if (!exactLabels.some((source) => new RegExp(source, "iu").test(label))) return false;
             const rect = el.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return false;
             const role = el.getAttribute("role");
@@ -255,7 +277,7 @@ async function runBaseline(
             scripted: true,
           })),
       ),
-    ), 5000, () => {
+    EXACT_LEGAL_LABELS), 5000, () => {
       throw new PageUnresponsiveError();
     });
     const lang = await bounded(page.evaluate(() => document.documentElement.lang || ""), 5000, () => "");
@@ -264,9 +286,8 @@ async function runBaseline(
     const cookiesBeforeLinkCheck = await context.cookies();
     for (const link of [legal.imprint, legal.privacy] as LegalLink[]) {
       // A page may point its legal links anywhere; never let it make consentprobe probe the local network.
-      if (link.found && link.href && (!isLocalHost(new URL(link.href).hostname) || isLocalHost(pageHost))) {
-        link.status = await checkLink(context, link.href, timeoutMs);
-      }
+      // Only a site the user typed as local (a dev server) may have its legal pages checked there.
+      if (link.found && link.href) link.status = await checkLink(context, link.href, timeoutMs, 1500, isLocalHost(new URL(url).hostname));
     }
 
     const measured = {
@@ -341,11 +362,18 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     throw new Error(`Only http and https URLs can be scanned, got "${url.protocol}".`);
   }
   // Credentials in the URL (a password-protected test site) are used for the visit, never reported.
-  const httpCredentials = url.username
-    ? { username: decodeURIComponent(url.username), password: decodeURIComponent(url.password) }
-    : undefined;
+  const decode = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s; // a raw "%" that is not an escape sequence
+    }
+  };
+  const login = url.username ? { username: decode(url.username), password: decode(url.password) } : undefined;
   url.username = "";
   url.password = "";
+  // Sent only to the typed origin: a third party that answers 401 (a tracker, a legal page elsewhere) gets nothing.
+  const httpCredentials = login ? { ...login, origin: url.origin } : undefined;
   const settleMs = options.settleMs ?? DEFAULTS.settleMs;
   const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   const bannerWaitMs = options.bannerWaitMs ?? DEFAULTS.bannerWaitMs;
@@ -373,11 +401,20 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     const stopped = (ms: number) => () => {
       throw new Error(`The scan did not finish within ${Math.round(ms / 1000)} s and was stopped. The page may be blocking the browser.`);
     };
-    let [base, reject, accept] = await bounded(Promise.all([
-      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity, bannerWaitMs, httpCredentials),
-      clickTest ? visit("reject", sessionOpts) : undefined,
-      clickTest ? visit("accept", sessionOpts) : undefined,
-    ]), deadlineMs, stopped(deadlineMs));
+    // Each visit has its own hard stop: a click visit that hangs becomes untested, the baseline stays.
+    const clickVisit = (action: "reject" | "accept") =>
+      bounded(visit(action, sessionOpts), deadlineMs, () =>
+        failedVisit(action, new Error(`did not finish within ${Math.round(deadlineMs / 1000)} s`)),
+      );
+    let [base, reject, accept] = await Promise.all([
+      bounded(
+        runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity, bannerWaitMs, httpCredentials),
+        deadlineMs,
+        stopped(deadlineMs),
+      ),
+      clickTest ? clickVisit("reject") : undefined,
+      clickTest ? clickVisit("accept") : undefined,
+    ]);
 
     // Banners can appear late. When one visit saw the banner and the other did not, the other is
     // repeated once with a longer wait, so a click is not silently left untested.
@@ -414,13 +451,15 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
           },
         ]
       : [];
+    // Query strings and fragments can carry session tokens; they stay out of findings and the result.
+    const legal = { imprint: legalWithoutQuery(base.legal.imprint), privacy: legalWithoutQuery(base.legal.privacy) };
     const findings = [
       ...findingsForRequests(base.requests, rules),
       ...findingsForCookies(base.cookies),
       ...wall,
       ...(base.consentWall
         ? []
-        : findingsForLegal(base.legal, imprintCheck, looksGerman || imprintMode === "always", /\.(de|at|ch|li)$/.test(host) || imprintMode === "always")),
+        : findingsForLegal(legal, imprintCheck, looksGerman || imprintMode === "always", /\.(de|at|ch|li)$/.test(host) || imprintMode === "always")),
       ...(consent && !(base.consentWall && !consent.banner.detected) ? findingsForConsent(consent, base.requests, rules) : []),
     ];
     const count = (s: "error" | "warn" | "info") => findings.filter((f) => f.severity === s).length;
@@ -433,10 +472,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
       phase: "before-consent",
       requests: base.requests,
       cookies: base.cookies,
-      legal: {
-        imprint: legalWithoutQuery(base.legal.imprint),
-        privacy: legalWithoutQuery(base.legal.privacy),
-      },
+      legal,
       consent,
       findings,
       summary: {
