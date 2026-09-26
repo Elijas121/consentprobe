@@ -26,7 +26,7 @@ Prior art and the tracker-data license decisions: `docs/RESEARCH.md`. How accura
 
 ```
 src/
-  cli.ts        argument parsing, exit codes (0 ok, 1 findings, 2 error)
+  cli.ts        argument parsing, exit codes (0 ok, 1 findings, 2 page not measurable, 3 usage or setup error)
   scan.ts       orchestration: baseline + reject + accept visits in parallel; PageNotMeasurableError
   consent.ts    banner detection (CMP selectors + strict whole-label text match + overlay check), clicking
   navigate.ts   navigation (HTML first, bounded wait for the rest), one-line navigation errors, consent-wall redirects
@@ -63,7 +63,7 @@ docs/VALIDATION.md  validation method, numbers and limits
 pnpm install                            # also builds dist/ (prepare script)
 node dist/cli.js --install-browser      # once
 pnpm typecheck
-pnpm test                               # 151 tests, about two and a half minutes, real browser
+pnpm test                               # 159 tests, about two and a half minutes, real browser
 pnpm build
 node dist/cli.js <url> --screenshots ../cp-runs/evidence
 scripts/scan-list.sh ../cp-runs/urls.txt ../cp-runs/out   # real-site regression, then read ../cp-runs/out/*.json
@@ -80,15 +80,15 @@ pnpm trap: a `pnpm-workspace.yaml` in a parent directory makes pnpm treat this r
 - **Three isolated visits in parallel.** Separate cookie jars so accept cannot contaminate reject. If only one click visit sees the banner, the other is repeated once with twice the banner wait; a click that stays untested is reported (info).
 - **Regular browser identity.** Headless Chromium says "HeadlessChrome" in its user agent and client hints, and several large sites then hide the banner and load tracking at once. Every visit presents itself like the same Chromium in a normal window (`identity.ts`, set per page through CDP, which also covers cross-origin frames). `navigator.webdriver` stays true and HTTP 403 is still refused: the goal is the page a visitor sees, not hiding.
 - **Plain controls.** After the role search (button, link), plain clickable elements inside an overlay are searched too (`<a>` without href, `onclick`, `tabindex`, `cursor: pointer`). The same strict whole-label rules decide; plain text is never clicked.
-- **Consent walls.** A redirect to a separate consent page (host `consent.*` or a path such as `/consent-management/`) is reported as info; legal links are not judged on that page.
+- **Consent walls.** A redirect to a separate consent page (host `consent.*` or a path such as `/consent-management/`) is reported as info; legal links are not judged on that page, and its controls count without an overlay, so reject and accept are clicked there like on a banner.
 - **Exact click moment.** An init script in every frame reports the physical `pointerdown`/`mousedown` through a binding; only requests after that moment count as "after reject". A marker taken in Node right before `click()` was not enough: the heartbeat test fails 3/3 with it, because Playwright's click takes tens of milliseconds.
 - **Cookies after reject = new or changed only.** Cookies are compared (name, domain, value hash) with a snapshot right before the click. Unchanged tracker cookies from before the click are info ("not removed"); the before-consent findings already cover them.
 - **Google Consent Mode is shown, not guessed.** The only query parameter kept is a validated `gcs` value. `G100` pings before consent and after reject are a separate warning with the signal as evidence; a "granted" signal before or after reject is called out explicitly.
 - **Nothing may wait forever.** Every page query goes through `ask()` (3 s limit, errors always handled, a thunk so nothing is sent to a dead frame). A frame that timed out once is skipped for the rest of the visit. Navigation waits for the HTML plus a bounded time for the rest. The whole scan has a hard deadline, and `browser.close()` is bounded too.
 - **Incomplete is not "no banner".** If any page query timed out and no banner was found, the result is "search incomplete". A visible cookie overlay without automatable controls is "not automatable". Only a clean search may say "not recognized".
-- **Strict labels.** Only labels that match a general reject/accept as a whole are clicked (German, English, French, Italian, Spanish, Dutch, Polish; plus the refusal wording of Google Funding Choices, InMobi and Klaro). A reject-like label for a single service (e.g. "für Partner X jetzt ablehnen") or a reject that requires a subscription ("Rifiuta e abbonati") is reported, not clicked. Reason: clicking it produced a false finding on a real site. Bare "Autoriser" is left out (push prompts).
-- **Overlay requirement.** Text-matched controls must sit in a fixed/sticky ancestor, a dialog, an overlay iframe (cross-origin CMP iframes such as Sourcepoint are handled through `frameElement`), or a container whose id, class or tag says cookie/consent/gdpr (inline consent bars). A fixed wrapper that holds `<main>`, more than 100 links, a visible text field, or at least 60 % of the page's elements (pages with 40 or more) is the page, not an overlay (smooth-scroll and app shells). An element whose id or class names a content blocker (video, map, embed, placeholder, blocker, opt-out) is never an overlay, also when fixed: consent tools put "load this video" placeholders in the page and in lightboxes. The walk crosses open shadow roots.
-- **Consent context.** A matched control counts only if its overlay mentions cookies, consent, privacy or tracking; the walk stops at the outermost overlay (a sticky button row inside a banner is not the banner), so the page's own footer does not count. Button labels do not count as context unless they name cookies or consent themselves: a newsletter prompt with "Zustimmen" / "Ablehnen" is no banner. Push and newsletter prompts use the same verbs ("Erlauben", "Ablehnen"). Known gap: an age or terms gate whose text mentions the privacy policy passes this check.
+- **Strict labels.** Only labels that match a general reject/accept as a whole are clicked (German, English, French, Italian, Spanish, Dutch, Polish; plus the refusal wording of Google Funding Choices, InMobi and Klaro). A reject-like label for a single service (e.g. "für Partner X jetzt ablehnen") or a reject that requires a subscription ("Rifiuta e abbonati") is reported, not clicked. Reason: clicking it produced a false finding on a real site. Bare "Autoriser" is left out (push prompts). Buttons are found by accessible name and by visible text (some tools give a button an aria-label such as "dismiss cookie message" while it reads "Akzeptieren"). A bare "OK" / "Okay!" counts as accept only when a general reject sits in the same overlay; on a pure notice it is never clicked (nothing to consent to).
+- **Overlay requirement.** Text-matched controls must sit in a fixed/sticky ancestor, a dialog, an overlay iframe (cross-origin CMP iframes such as Sourcepoint are handled through `frameElement`), or a container whose id, class or tag says cookie/consent/gdpr (inline consent bars). A fixed wrapper that holds `<main>`, more than 100 links, a visible text field, or at least 60 % of the page's elements (pages with 40 or more) is the page, not an overlay (smooth-scroll and app shells). An element whose id or class names a content blocker (video, map, embed, placeholder, blocker, opt-out) is never an overlay, also when fixed: consent tools put "load this video" placeholders in the page and in lightboxes. The walk crosses open shadow roots. On a consent-wall page the whole page counts.
+- **Consent context.** A matched control counts only if its overlay mentions cookies, consent, privacy or tracking; the walk stops at the outermost overlay (a sticky button row inside a banner is not the banner), so the page's own footer does not count. Button labels do not count as context unless they name cookies or consent themselves: a newsletter prompt with "Zustimmen" / "Ablehnen" is no banner. Push and newsletter prompts use the same verbs ("Erlauben", "Ablehnen"). An age or terms gate ("mindestens 18 Jahre", "AGB", "Terms of Service") that names the privacy policy but not cookies, consent, tracking or personalisation is no banner either.
 - **Choice parts are no decisions.** Checkbox labels, switches, tabs and accordion headers ("Essential", "Notwendige Cookies") are never taken for a control.
 - **Label re-check.** Controls are found by position; right before the click the label is read again and the click is skipped if it changed.
 - **Same company is not a third party.** A small, hand-written map of company-run domains (Google, Microsoft, Meta, Amazon, Apple, Spotify, Wikimedia, Automattic, X, TikTok) treats e.g. Google Fonts on youtube.com as first party and lists such services as info. Customer hosting (blogspot.com, cloudfront.net, github.io …) is deliberately absent.
@@ -166,7 +166,7 @@ A theory that turned out wrong: a banner dialog looked like a marketing mock-up,
 
 1. npm publish.
 2. A second person judging a blind sample independently.
-3. Second banner layers ("Settings"), full-page consent walls, EU geolocation option.
+3. Second banner layers ("Settings"), EU geolocation option.
 
 ## Definition of done for any change
 

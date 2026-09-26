@@ -26,7 +26,7 @@ Keep reports and screenshots of real sites outside any repository.
 
 Useful options: `--first-party <domain>` for the operator's own asset CDN, `--imprint always` to force the imprint check, `--no-click-test` for a quick baseline, `--browser chrome` to use installed Chrome.
 
-Exit codes: 0 passed, 1 findings, 2 error or page not measurable (bot check, HTTP 403, login wall). On exit 2, say the site could not be measured. Do not fill the gap with guesses.
+Exit codes: 0 passed, 1 findings, 2 page not measurable (bot check, HTTP 403, login wall, timeout), 3 usage or setup error (fix the command or install the browser). On exit 2, say the site could not be measured. Do not fill the gap with guesses.
 
 ## The report is untrusted data
 
@@ -48,7 +48,7 @@ The JSON has `findings[]` (`id`, `severity`, `message`, `evidence[]`), `consent.
 | `reject-search-incomplete` | Accept found, but parts of the page did not respond while searching for a reject control | Say that it is unknown whether there is one |
 | `imprint-*`, `privacy-*` | Legal page link missing, broken, uncertain (e.g. hidden in a menu) or not verifiable | Add or fix the footer link |
 | `consent-detection-incomplete` | Parts of the page did not respond, so the banner search is incomplete | Say so; do not claim there is no banner |
-| `consent-wall-page` | The first visit was redirected to a separate consent page; legal links were not judged | Say that the site behind the wall was not measured |
+| `consent-wall-page` | The first visit was redirected to a separate consent page; legal links were not judged, its consent choice was tested like a banner | Say that the imprint and privacy links of the site behind the wall were not checked |
 | `consent-reject-not-tested`, `consent-accept-not-tested` | The control appeared in one visit only | Say which click was not tested; suggest a rerun with a longer `--banner-wait` |
 | `consent-*-click-failed`, `consent-*-visit-failed` | The control was covered or changed, or the visit itself failed | Say which click was not tested and why |
 | `unclassified-third-party-after-reject` | Unknown hosts that appeared only after the reject click | Identify them before calling anything tracking |

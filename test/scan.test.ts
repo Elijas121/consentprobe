@@ -146,6 +146,8 @@ describe("scan (real browser)", () => {
 
   it("refuses to measure a bot check that answers HTTP 200", async () => {
     await expect(scan(`${fx.origin}/bot-challenge`, opts())).rejects.toThrow(/bot check/);
+    // A block page with HTTP 200 would otherwise produce "no imprint" and "no privacy link" errors.
+    await expect(scan(`${fx.origin}/access-denied`, opts())).rejects.toThrow(/bot check/);
     // A hidden device check on a small ordinary page is no bot check.
     const contact = await scan(`${fx.origin}/contact-hidden-captcha`, opts());
     expect(contact.finalUrl).toBe(`${fx.origin}/contact-hidden-captcha`);
@@ -171,6 +173,11 @@ describe("scan (real browser)", () => {
     expect(ids(r)).not.toContain("imprint-link-missing");
     expect(ids(r)).not.toContain("privacy-link-missing");
     expect(ids(r)).not.toContain("no-consent-banner-detected");
+    // The page is the consent choice: its accept control is clicked although it sits in no overlay.
+    expect(r.consent?.accept?.control?.label).toBe("Akzeptieren und weiter");
+    expect(r.consent?.accept?.clicked).toBe(true);
+    expect(r.consent?.reject?.control).toBeUndefined();
+    expect(ids(r)).toContain("no-reject-control-on-first-layer");
   });
 
   it("recognizes consent-wall redirects by host or path only", async () => {

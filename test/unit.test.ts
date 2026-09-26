@@ -510,3 +510,28 @@ describe("legal link check", () => {
     for (const h of ["example.com", "8.8.8.8", "172.32.0.1", "2001:db8::1"]) expect(isLocalHost(h), h).toBe(false);
   });
 });
+
+describe("page-side overlay rules", () => {
+  // Page functions cannot share code, so the overlay rule exists three times in src/consent.ts
+  // (isOverlayElement, markPlainControls, overlayIndices). The copies must never drift apart.
+  const source = readFileSync(new URL("../src/consent.ts", import.meta.url), "utf8");
+  const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+  const copies = (start: string, end: string) => {
+    const out: string[] = [];
+    for (let i = source.indexOf(start); i >= 0; i = source.indexOf(start, i + 1)) out.push(squash(source.slice(i, source.indexOf(end, i) + end.length)));
+    return out;
+  };
+  it("keeps the three copies of the page-shell, content-blocker and overlay tests identical", () => {
+    for (const [start, end] of [
+      ["const pageShell = ", "};"],
+      ["if (/blocker|blocked|", "return false;"],
+      ['if ((position === "fixed" || position === "sticky")', "return true;"],
+      ['if (role === "dialog" || role === "alertdialog"', "return true;"],
+      ['if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/', "return true;"],
+    ] as const) {
+      const found = copies(start, end);
+      expect(found, start).toHaveLength(3);
+      expect(new Set(found).size, start).toBe(1);
+    }
+  });
+});

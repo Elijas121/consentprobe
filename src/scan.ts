@@ -4,7 +4,9 @@ import { chromium, type Browser } from "playwright";
 import { locateControls, runConsentSession, type SessionOptions } from "./consent.js";
 import { bounded, newBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, visitorIdentity, type HttpCredentials, type VisitorIdentity } from "./identity.js";
-import { explainNavigationError, openPage } from "./navigate.js";
+import { explainNavigationError, isConsentWallRedirect, openPage } from "./navigate.js";
+
+export { isConsentWallRedirect };
 import { BUILT_IN_RULES } from "./rules.js";
 import {
   classifyCookies,
@@ -53,8 +55,8 @@ export class PageChallengedError extends Error {
 export function looksLikeChallenge(p: { url: string; title: string; markers: number; textLength: number; links: number }): boolean {
   const small = p.textLength < 3000 && p.links < 30;
   const url = /[?&](js_challenge|__cf_chl_[a-z_]*|cf_chl_[a-z_]*)=/i.test(p.url);
-  // Only the titles of the bot-check vendors themselves; generic words ("Security check") also title normal small pages.
-  const title = /^(just a moment|nur einen moment|attention required! \| cloudflare|pardon our interruption|verify you are (a )?human|are you a robot|checking your browser|ddos-guard)/i.test(p.title.trim());
+  // Titles of bot-check vendors and of block pages ("Access denied"); generic words ("Security check") also title normal small pages.
+  const title = /^(just a moment|nur einen moment|attention required! \| cloudflare|pardon our interruption|verify you are (a )?human|are you a robot|checking your browser|ddos-guard|access denied|zugriff verweigert)/i.test(p.title.trim());
   return small && (url || title || p.markers > 0);
 }
 
@@ -87,19 +89,27 @@ export class PageNotMeasurableError extends Error {
   }
 }
 
+/** A problem the user has to fix (a wrong URL, no browser, missing libraries), not one of the page. */
+export class SetupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SetupError";
+  }
+}
+
 /** Turn Playwright's long "browser missing" error into one actionable line. */
 export function explainLaunchError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   if (/distribution '?chrome'? is not found|chrome.*not found at/i.test(message)) {
-    return new Error("Google Chrome is not installed. Install it, or leave out --browser chrome to use the bundled Chromium (install it once with: consentprobe --install-browser).");
+    return new SetupError("Google Chrome is not installed. Install it, or leave out --browser chrome to use the bundled Chromium (install it once with: consentprobe --install-browser).");
   }
   if (/missing dependencies|shared libraries|install-deps|--with-deps/i.test(message)) {
-    return new Error("Chromium could not start because system libraries are missing. On Linux run once, with root rights: consentprobe --install-browser --with-deps");
+    return new SetupError("Chromium could not start because system libraries are missing. On Linux run once, with root rights: consentprobe --install-browser --with-deps");
   }
   if (/executable doesn't exist/i.test(message)) {
-    return new Error("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
+    return new SetupError("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
   }
-  return err instanceof Error ? err : new Error(message);
+  return new SetupError(message);
 }
 
 /** Statuses that say "try again later", not "this page does not exist". */
@@ -178,18 +188,6 @@ const DEFAULTS = { settleMs: 3000, timeoutMs: 30000, bannerWaitMs: 4000 };
 
 type Baseline = Pick<ScanResult, "finalUrl" | "requests" | "cookies" | "legal"> & { lang: string; consentWall: boolean };
 
-/**
- * Some sites answer a first visit with a redirect to a separate consent page (a "consent wall",
- * e.g. /consent-management/ or consent.example.com). Measured naively, that page lacks the site's
- * footer and would produce false "no imprint" findings.
- */
-export function isConsentWallRedirect(requested: string, final: string): boolean {
-  const a = new URL(requested);
-  const b = new URL(final);
-  if (a.host === b.host && a.pathname === b.pathname) return false;
-  return /(^|[.-])(consent|cookie-?consent|cookiewall|privacy-?gate)([.-]|$)/i.test(b.hostname) ||
-    /\/(consent|consent-management|cookie-?consent|cookiewall|cookie-wall|privacy-?gate)(\/|$)/i.test(b.pathname);
-}
 
 /** Visit the page without touching any banner: this is the "before consent" state. */
 async function runBaseline(
@@ -367,10 +365,10 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new Error(`"${rawUrl}" is not a valid URL. Include the scheme, e.g. https://example.com.`);
+    throw new SetupError(`"${rawUrl}" is not a valid URL. Include the scheme, e.g. https://example.com.`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`Only http and https URLs can be scanned, got "${url.protocol}".`);
+    throw new SetupError(`Only http and https URLs can be scanned, got "${url.protocol}".`);
   }
   // Credentials in the URL (a password-protected test site) are used for the visit, never reported.
   const decode = (s: string) => {
@@ -457,7 +455,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
             id: "consent-wall-page",
             severity: "info" as const,
             message:
-              "The site redirected the first visit to a separate consent page. consentprobe measured that page, not the site behind it: imprint and privacy links are not checked, and a full-page consent choice is not clicked.",
+              "The site redirected the first visit to a separate consent page. The measurement before consent describes that page; imprint and privacy links are not checked there. Its consent choice is tested like a banner.",
             evidence: [withoutQuery(base.finalUrl)],
           },
         ]

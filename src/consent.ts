@@ -4,7 +4,7 @@ import type { Browser, Frame, Locator, Page } from "playwright";
 import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, type HttpCredentials, type VisitorIdentity } from "./identity.js";
-import { explainNavigationError, openPage } from "./navigate.js";
+import { explainNavigationError, isConsentWallRedirect, openPage } from "./navigate.js";
 import { recordRequests, type RawRequest } from "./record.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
 
@@ -44,7 +44,8 @@ export function normalizeLabel(label: string): string {
 const REJECT_STRICT: RegExp[] = [
   /^(alles?(\s+cookies)?\s+)?(ablehnen|verweigern)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
   /^(alle\s+)?einwilligung(en)?\s+(ablehnen|verweigern)$/,
-  /^(alle\s+)?(optionalen?|nicht\s+notwendigen?|zusätzlichen?)\s+cookies\s+ablehnen$/,
+  /^(alle\s+)?(optionalen?|nicht\s+notwendigen?|zusätzlichen?)(\s+cookies)?\s+ablehnen$/,
+  /^nur\s+(das\s+)?(nötigste|notwendigste)$/,
   /^(nur\s+)?(technisch\s+)?(notwendige|erforderliche|essenzielle|essentielle)(\s+cookies)?(\s+(akzeptieren|zulassen|erlauben|verwenden|speichern))?$/,
   /^(weiter\s+)?ohne\s+(zustimmung|einwilligung|akzeptieren)(\s+(fortfahren|weiter|weiterlesen))?$/,
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
@@ -67,7 +68,7 @@ const REJECT_STRICT: RegExp[] = [
   /^(akceptuj\s+)?tylko\s+(niezbędne|wymagane|konieczne)(\s+(pliki\s+)?cookies?)?$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
-  /^(alle[ns]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
+  /^(alle[nsm]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
   /^(ja\s+)?(ich\s+)?stimme\s+zu(\s+und\s+akzeptiere\s+alle(\s+cookies)?)?$/,
   /^ich\s+akzeptiere(\s+alle)?$/,
   /^(ich\s+bin\s+)?einverstanden$/,
@@ -88,6 +89,13 @@ const ACCEPT_STRICT: RegExp[] = [
   /^(za)?akceptuj(ę)?(\s+wszystk(ie|o))?$/,
   /^(zgadzam\s+się|zezwól\s+na\s+wszystkie)$/,
 ];
+/**
+ * "OK" / "Okay!" is an accept only next to a real reject in the same banner. On a pure notice
+ * ("only necessary cookies are used") there is nothing to consent to, so it is never clicked there.
+ */
+const OK_LABEL = /^ok(ay)?$/;
+export const isOkLabel = (label: string): boolean => OK_LABEL.test(normalizeLabel(label));
+
 /** Loose: anything that mentions rejecting. Reported, never clicked. */
 const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse|refuser|rifiut|rechaz|weiger|afwijz|odrzu/i;
 const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow|accett|acept|akcept|akkoord/i;
@@ -97,7 +105,7 @@ const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|acce
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
+  /^[^a-z0-9]*ok(ay)?[^a-z0-9]*$|nötig|ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -131,9 +139,7 @@ const isOverlayElement = (el: Element): boolean => {
     const position = getComputedStyle(n).position;
     if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
     const role = n.getAttribute("role");
-    if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
-      return true;
-    }
+    if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
     // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
     if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
       if (((n as HTMLElement).innerText || "").length < 4000) return true;
@@ -185,6 +191,8 @@ const hasConsentContext = (el: Element): boolean => {
   // Button labels ("Zustimmen", "Ablehnen") do not make their own context: only the prose around them
   // counts, and a label only when it names cookies or consent itself ("Cookies akzeptieren").
   const labelWords = /cookie|consent|einwillig|tracking|datenschutz|privacy|privatsph/i;
+  const gate = /\b(1[68]|21)\s*(jahre|years|\+)|mindestens\s+1[68]|volljährig|alter(s)?(prüfung|verifi|bestätigung)|age\s+verification|legal\s+(drinking\s+)?age|years\s+of\s+age|jugendschutz|\bagb\b|nutzungsbedingungen|geschäftsbedingungen|terms\s+(of\s+(use|service)|and\s+conditions)/i;
+  const strong = /cookie|consent|einwillig|tracking|personalis|privatsph/i;
   let n: Element | null = up(el);
   for (let depth = 0; n && n.tagName !== "BODY" && depth < 16; depth += 1, n = up(n)) {
     const text = deepText(n);
@@ -196,7 +204,12 @@ const hasConsentContext = (el: Element): boolean => {
       .filter(Boolean);
     let prose = text;
     for (const label of labels) prose = prose.replace(label, " ");
-    if (words.test(prose) || labels.some((label) => labelWords.test(label))) return true;
+    const labelContext = labels.some((label) => labelWords.test(label));
+    if (words.test(prose) || labelContext) {
+      // An age or terms gate names the privacy policy too, but it asks for no consent to cookies or tracking.
+      if (gate.test(prose) && !strong.test(prose) && !labelContext) return false;
+      return true;
+    }
     // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
     // A sticky button row or a fixed toolbar inside the prompt is not the whole prompt: keep walking to it.
     if (isOverlayBox(n) && !outerOverlay(n)) return false;
@@ -224,6 +237,8 @@ interface Controls {
   accept?: Found;
   /** A reject-like label that is not a general reject (e.g. an opt-out for one service). */
   rejectLike?: string;
+  /** An "OK" control: counts as accept only next to a reject in the same banner. */
+  ok?: Found;
 }
 
 async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<string> {
@@ -287,7 +302,7 @@ const PLAIN_MARK = "data-consentprobe-control";
  * clickable elements inside an overlay whose whole text is short and passes the candidate filter;
  * the strict label check still decides afterwards. Buttons and real links are left to the role search.
  */
-function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
+function markPlainControls(args: { source: string; flags: string; mark: string; max: number; anywhere: boolean }): number {
   const candidate = new RegExp(args.source, args.flags);
   // Walk out of open shadow roots too: a web-component banner's content is not part of the host and
   // not reachable through a "body *" query. Same walk as isOverlayElement.
@@ -344,7 +359,7 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
     const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
     if (!text || text.length > args.max || !candidate.test(text)) continue;
     const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0 || !inOverlay(el)) continue;
+    if (rect.width === 0 || rect.height === 0 || (!args.anywhere && !inOverlay(el))) continue;
     el.setAttribute(args.mark, "");
     marked += 1;
   }
@@ -390,8 +405,12 @@ function overlayIndices(els: Element[], max: number): number[] {
   return out;
 }
 
-async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
-  const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
+/**
+ * `anywhere`: the whole page is the consent choice (a consent wall the site redirected to), so
+ * controls count without sitting in an overlay.
+ */
+async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pick<Controls, "reject" | "accept" | "rejectLike" | "ok">> {
+  const out: Pick<Controls, "reject" | "accept" | "rejectLike" | "ok"> = {};
   const candidates = CANDIDATE_LABEL;
   for (const frame of await searchableFrames(page, q)) {
     // A cross-origin banner frame is itself the overlay; everything inside it qualifies.
@@ -401,11 +420,13 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         const el = await frame.frameElement();
         return el.evaluate(isOverlayElement);
       }, q, false, page.mainFrame()));
-    for (const role of ["button", "link"] as const) {
-      const all = frame.getByRole(role, { name: candidates });
+    // By accessible name, and by visible text: some consent tools give their button an aria-label that
+    // differs from the text the visitor reads ("dismiss cookie message" on a button labelled "Akzeptieren").
+    for (const [role, byLabelText] of [["button", false], ["link", false], ["button", true]] as const) {
+      const all = byLabelText ? frame.getByRole(role).filter({ hasText: candidates }) : frame.getByRole(role, { name: candidates });
       const total = await ask(() => all.count(), q, 0, frame);
       const indices =
-        frameIsOverlay
+        anywhere || frameIsOverlay
           ? [...Array(Math.min(total, 15)).keys()]
           : await ask(() => all.evaluateAll(overlayIndices, 15), q, [] as number[], frame);
       for (const i of indices) {
@@ -413,17 +434,18 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
         const label = await labelOf(locator, q, frame);
         if (!label || label.length > MAX_LABEL) continue;
-        if (!(await inOverlay(locator, frame, page, q))) continue;
+        if (!anywhere && !(await inOverlay(locator, frame, page, q))) continue;
         if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
         if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
         const found: Found = { locator, frame, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
+        else if (isOkLabel(label)) out.ok ??= found;
         else if (isRejectLike(label)) out.rejectLike ??= label;
       }
     }
     if (out.reject && out.accept) continue;
-    const args = { source: candidates.source, flags: candidates.flags, mark: PLAIN_MARK, max: MAX_LABEL };
+    const args = { source: candidates.source, flags: candidates.flags, mark: PLAIN_MARK, max: MAX_LABEL, anywhere };
     if ((await ask(() => frame.evaluate(markPlainControls, args), q, 0, frame)) === 0) continue;
     const plain = frame.locator(`[${PLAIN_MARK}]`);
     const count = Math.min(await ask(() => plain.count(), q, 0, frame), 15);
@@ -436,13 +458,44 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       const found: Found = { locator, frame, control: { label, method: "text" } };
       if (isRejectLabel(label)) out.reject ??= found;
       else if (isAcceptLabel(label)) out.accept ??= found;
+      else if (isOkLabel(label)) out.ok ??= found;
       else if (isRejectLike(label)) out.rejectLike ??= label;
     }
   }
   return out;
 }
 
-async function scanOnce(page: Page, q: QueryBudget): Promise<Controls> {
+/** True when both controls sit in the same overlay (the nearest fixed, sticky, dialog or named consent box). */
+async function sameBanner(a: Found, b: Found, q: QueryBudget): Promise<boolean> {
+  if (a.frame !== b.frame) return false;
+  const other = await ask(() => b.locator.elementHandle({ timeout: 1000 }), q, null, b.frame);
+  if (!other) return false;
+  return ask(
+    () =>
+      a.locator.evaluate((x, y) => {
+        const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+        let box: Element | null = null;
+        // Start above the control: consent tools name the buttons themselves too ("cc-btn submit-consent").
+        for (let n: Element | null = up(x); n && n.tagName !== "BODY"; n = up(n)) {
+          const style = getComputedStyle(n);
+          const role = n.getAttribute("role");
+          const named = /cookie|consent|gdpr/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`);
+          if (style.position === "fixed" || style.position === "sticky" || role === "dialog" || role === "alertdialog" || n.tagName === "DIALOG" || named) {
+            box = n;
+            break;
+          }
+        }
+        if (!box) return false;
+        for (let n: Element | null = y as Element; n; n = up(n)) if (n === box) return true;
+        return false;
+      }, other),
+    q,
+    false,
+    a.frame,
+  );
+}
+
+async function scanOnce(page: Page, q: QueryBudget, anywhere = false): Promise<Controls> {
   const controls: Controls = {};
   for (const cmp of CMPS) {
     const reject = await bySelector(page, cmp.reject, q);
@@ -454,23 +507,24 @@ async function scanOnce(page: Page, q: QueryBudget): Promise<Controls> {
       break;
     }
   }
-  const text = await byText(page, q);
+  const text = await byText(page, q, anywhere);
   controls.reject ??= text.reject;
   controls.accept ??= text.accept;
+  if (!controls.accept && text.ok && controls.reject && (await sameBanner(text.ok, controls.reject, q))) controls.accept = text.ok;
   if (!controls.reject) controls.rejectLike = text.rejectLike;
   return controls;
 }
 
 /** Poll until a banner control shows up (banners often render late), then re-scan once for the second button. */
-export async function locateControls(page: Page, waitMs: number, q: QueryBudget): Promise<Controls> {
+export async function locateControls(page: Page, waitMs: number, q: QueryBudget, anywhere = false): Promise<Controls> {
   const deadline = Date.now() + waitMs;
   do {
     // The scan may have been stopped (deadline, unresponsive page); do not keep asking a closed page.
     if (page.isClosed()) return {};
-    const first = await scanOnce(page, q);
+    const first = await scanOnce(page, q, anywhere);
     if (first.accept || first.reject) {
       await page.waitForTimeout(300);
-      const second = await scanOnce(page, q);
+      const second = await scanOnce(page, q, anywhere);
       return {
         cmp: second.cmp ?? first.cmp,
         reject: second.reject ?? first.reject,
@@ -567,7 +621,9 @@ export async function runConsentSession(
       throw explainNavigationError(err, o.timeoutMs);
     });
 
-    const controls = await locateControls(page, o.bannerWaitMs, q);
+    // On a consent wall the site redirected to, the whole page is the consent choice.
+    const wall = isConsentWallRedirect(url, page.url());
+    const controls = await locateControls(page, o.bannerWaitMs, q, wall);
     const banner: ConsentBanner = {
       detected: Boolean(controls.accept || controls.reject),
       cmp: controls.cmp,

@@ -274,6 +274,27 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/contact-hidden-captcha":
         // A small contact page with a hidden bot-protection element: an ordinary page, not a bot check.
         return html(200, page(`<h1>Kontakt</h1><p>Schreiben Sie uns.</p><form><input type="email"></form><div id="px-captcha" style="display:none"></div>${FOOTER}`));
+      case "/banner-okay":
+        // "Okay!" next to a real reject in the same banner is the accept.
+        return html(200, page(`<h1>Okay</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies und andere Technologien.</p><button class="cc-btn">Einstellungen</button><button class="cc-btn cc-deny">Ablehnen</button><button class="cc-btn cc-allow submit-consent">Okay!</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/ok-in-other-bar":
+        // The reject sits in the cookie banner; the "OK" belongs to a separate notice bar and is no accept.
+        return html(200, page(`<h1>Two bars</h1>${FOOTER}<div id="notice" style="position:fixed;top:0;left:0;right:0;background:#eee">Wir nutzen Cookies nur für den Warenkorb. <button>OK</button></div><div id="banner" role="dialog" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies für Statistik.</p><button>Einstellungen</button><button>Alle ablehnen</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/age-gate":
+        // An age gate that names the privacy policy: "Ablehnen" / "Zustimmen" are no cookie decision.
+        return html(200, page(`<h1>Weinhandel</h1>${FOOTER}<div role="dialog" style="position:fixed;top:20%;left:20%;width:50%;background:#fff;padding:1rem"><p>Bitte bestätigen Sie, dass Sie mindestens 18 Jahre alt sind. Es gelten unsere AGB und die Datenschutzerklärung.</p><button>Ablehnen</button><button>Zustimmen</button></div>`));
+      case "/terms-gate":
+        // A terms-of-service gate in English, the same case.
+        return html(200, page(`<h1>App</h1>${FOOTER}<div role="dialog" style="position:fixed;top:20%;left:20%;width:50%;background:#fff;padding:1rem"><p>Please accept our Terms of Service and Privacy Policy to continue.</p><button>Decline</button><button>Accept</button></div>`));
+      case "/banner-with-terms":
+        // A real cookie banner that also names the terms: still a banner.
+        return html(200, page(`<h1>Shop</h1>${FOOTER}<div id="banner" role="dialog" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies für Statistik und Werbung. Mehr in unseren AGB und der Datenschutzerklärung.</p><button>Ablehnen</button><button>Zustimmen</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/banner-aria-label":
+        // A cookieconsent-style notice: the button reads "Akzeptieren", its aria-label says something else.
+        return html(200, page(`<h1>Shop</h1>${FOOTER}<div id="banner" role="dialog" style="position:fixed;top:0;left:0;right:0;background:#eee;padding:1rem">Wir verwenden Cookies, um unsere Dienste zu verbessern. <a role="button" tabindex="0" aria-label="dismiss cookie message" class="cc-btn cc-dismiss">Akzeptieren</a></div><script>document.querySelector('#banner a').addEventListener('click',function(){document.getElementById('banner').remove();});</script>`));
+      case "/access-denied":
+        // A block page served with HTTP 200 instead of the site: not measurable.
+        return html(200, `<!doctype html><html lang="de"><head><title>Zugriff verweigert / Access denied</title></head><body><h1>Zugriff verweigert</h1><p>Aus Sicherheitsgründen mussten wir den Zugriff verweigern.</p></body></html>`);
       case "/banner-many-links": {
         // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
         const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");

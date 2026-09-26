@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel } from "../src/consent.js";
+import { CANDIDATE_LABEL, isAcceptLabel, isOkLabel, isRejectLabel } from "../src/consent.js";
 
 describe("banner wording seen on large sites", () => {
   const accept = ["Geht klar", "Allen Zwecken zustimmen", "Allen zustimmen", "Allen Cookies zustimmen", "Alle Cookies zulassen", "Accept everything 🍪", "I Accept All"];
@@ -69,6 +69,40 @@ describe("banner wording seen on large sites", () => {
   it("does not take partial or opposite wording as a general accept", () => {
     for (const l of ["Allen Zwecken widersprechen", "Allen Partnern zustimmen", "Geht klar, aber nur notwendige", "Klar"]) {
       expect(isAcceptLabel(l), l).toBe(false);
+    }
+  });
+});
+
+describe("OK labels", () => {
+  it("knows a bare OK or Okay, and only those", () => {
+    for (const l of ["OK", "Ok", "Okay!", " okay. "]) {
+      expect(isOkLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+      expect(isAcceptLabel(l), l).toBe(false);
+    }
+    for (const l of ["OK, verstanden", "Cookies", "Booking", "Okay, alle ablehnen"]) expect(isOkLabel(l), l).toBe(false);
+    expect(CANDIDATE_LABEL.test("Cookies")).toBe(false);
+  });
+});
+
+describe("wording found in the held-out sample", () => {
+  it("knows these general controls", () => {
+    for (const l of ["Alle optionalen ablehnen", "ALLE OPTIONALEN ABLEHNEN", "Optionale ablehnen", "Nur das Nötigste", "Nur das Notwendigste"]) {
+      expect(isRejectLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Allem zustimmen"]) {
+      expect(isAcceptLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Ok ✓", "✓ OK"]) {
+      expect(isOkLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+  });
+  it("still rejects look-alikes", () => {
+    for (const l of ["Nur das Nötigste zeigen", "Allem zustimmen und Newsletter abonnieren", "Optionale Felder ablehnen und senden"]) {
+      expect(isRejectLabel(l) || isAcceptLabel(l), l).toBe(false);
     }
   });
 });

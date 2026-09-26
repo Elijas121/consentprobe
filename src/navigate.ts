@@ -29,3 +29,16 @@ export function explainNavigationError(err: unknown, timeoutMs: number): Error {
   }
   return new Error(first.replace(/^page\.goto:\s*/, ""));
 }
+
+/**
+ * Some sites answer a first visit with a redirect to a separate consent page (a "consent wall",
+ * e.g. /consent-management/ or consent.example.com). Measured naively, that page lacks the site's
+ * footer and would produce false "no imprint" findings.
+ */
+export function isConsentWallRedirect(requested: string, final: string): boolean {
+  const a = new URL(requested);
+  const b = new URL(final);
+  if (a.host === b.host && a.pathname === b.pathname) return false;
+  return /(^|[.-])(consent|cookie-?consent|cookiewall|privacy-?gate)([.-]|$)/i.test(b.hostname) ||
+    /\/(consent|consent-management|cookie-?consent|cookiewall|cookie-wall|privacy-?gate)(\/|$)/i.test(b.pathname);
+}

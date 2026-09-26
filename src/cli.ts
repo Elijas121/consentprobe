@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { normalizeUrlInput, parseMs, parseRules } from "./input.js";
 import { formatJson, formatMarkdown, formatText, plain } from "./report.js";
-import { scan } from "./scan.js";
+import { scan, SetupError } from "./scan.js";
 import { VERSION } from "./version.js";
 import type { ScanOptions, Severity } from "./types.js";
 
@@ -36,14 +36,18 @@ Options:
   -h, --help                Show this help
   -v, --version             Show the version
 
-Exit codes: 0 = passed, 1 = findings at or above --fail-on, 2 = usage or runtime error.
+Exit codes: 0 = passed, 1 = findings at or above --fail-on, 2 = page not measurable
+(bot check, HTTP error, login wall, timeout), 3 = usage or setup error.
 Technical findings only; this is not legal advice.`;
 
-/** Report a usage or runtime error. The exit code is set, not forced, so piped output is not cut off. */
-function fail(message: string): void {
+/**
+ * Report an error. Exit code 2: the page could not be measured (the site's doing). Exit code 3: a
+ * usage or setup error the user has to fix. The code is set, not forced, so piped output is not cut off.
+ */
+function fail(message: string, code: 2 | 3 = 3): void {
   // Error texts can quote the page (a thrown script error); keep them to one printable line.
   process.stderr.write(`consentprobe: ${plain(message)}\n`);
-  process.exitCode = 2;
+  process.exitCode = code;
 }
 
 /**
@@ -154,7 +158,7 @@ async function main(): Promise<void> {
   try {
     result = await scan(url, options);
   } catch (err) {
-    return fail(err instanceof Error ? err.message : String(err));
+    return fail(err instanceof Error ? err.message : String(err), err instanceof SetupError ? 3 : 2);
   }
 
   const output = format === "json" ? formatJson(result) : format === "md" ? formatMarkdown(result) : formatText(result);

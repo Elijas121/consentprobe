@@ -285,6 +285,34 @@ describe("consent click test (real browser)", () => {
     expect(r.consent?.reject?.clicked).toBe(true);
   });
 
+  it("takes 'Okay!' as the accept only next to a reject in the same banner", async () => {
+    const r = await scan(`${fx.origin}/banner-okay`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.accept?.control?.label).toBe("Okay!");
+    expect(r.consent?.accept?.clicked).toBe(true);
+    const other = await scan(`${fx.origin}/ok-in-other-bar`, { ...opts(), bannerWaitMs: 800 });
+    expect(other.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: false });
+    expect(other.consent?.accept?.clicked).toBe(false);
+  }, 30000);
+
+  it("never takes an age or terms gate for a cookie banner, but keeps a banner that names the terms", async () => {
+    for (const path of ["/age-gate", "/terms-gate"]) {
+      const r = await scan(`${fx.origin}${path}`, { ...opts(), bannerWaitMs: 800 });
+      expect(r.consent?.banner, path).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+      expect(r.consent?.reject?.clicked, path).toBe(false);
+    }
+    const banner = await scan(`${fx.origin}/banner-with-terms`, opts());
+    expect(banner.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(banner.consent?.reject?.clicked).toBe(true);
+  }, 30000);
+
+  it("finds a button whose aria-label differs from the text the visitor reads", async () => {
+    const r = await scan(`${fx.origin}/banner-aria-label`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: false, acceptFound: true });
+    expect(r.consent?.accept?.control?.label).toBe("Akzeptieren");
+    expect(r.consent?.accept?.clicked).toBe(true);
+  }, 30000);
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });

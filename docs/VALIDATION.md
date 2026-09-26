@@ -117,7 +117,7 @@ Against the checked ground truth for each site:
 | Blind first run (before any fix from this sample) | 47/47 | 36/39 | 36/39 |
 | After the fixes, same sites (no longer blind) | 46/46 | 38/38 | 37/38 |
 
-Not counted: one site where the tool reported "search incomplete" and made no claim, and one site with a consent wall on a separate page, where the tool reports the wall but by design does not click (R and A). In the rescan after the fixes, one large site refused the browser with HTTP 403 after the many visits of that day; with the same code it had been measured correctly in three earlier runs.
+Not counted: one site where the tool reported "search incomplete" and made no claim, and one site with a consent wall on a separate page, where the tool at the time reported the wall but by design did not click (R and A). Since then the choice on such a wall is clicked like a banner; the numbers here were measured before that change. In the rescan after the fixes, one large site refused the browser with HTTP 403 after the many visits of that day; with the same code it had been measured correctly in three earlier runs.
 
 **Errors of the blind run:**
 
@@ -127,9 +127,55 @@ Not counted: one site where the tool reported "search incomplete" and made no cl
 
 **Clicks.** Blind run: 57 completed clicks, every one on a general reject or accept control. Five further click attempts failed: the three category labels above, and two real controls hidden behind a location popup, which the tool reported as blocked. After the fixes: 58 completed clicks, all on general controls; the two blocked ones remain and are reported as such.
 
+## Rerun of all samples with the final code (2026-09-26)
+
+A review of the code from several angles led to a round of fixes (international wording, fewer false findings on non-German sites, hardening). Before merging them, every earlier sample was scanned again with the final code: the 71 small-business sites, the person-judged sample, and 25 large international sites (news, platforms, software) that the review had added. 146 URLs; 6 could not be measured (three HTTP 403, one bot check, one HTTP 500, one invalid TLS certificate). This rerun is not blind: the tool's author had seen all of these sites before.
+
+**Found and fixed during the rerun:**
+
+- **Buttons in a row of their own.** A banner whose buttons sit in a sticky button row inside the banner was no longer recognized: the new check that a control belongs to a cookie prompt stopped at the button row, where no consent words are. The check now walks on to the whole banner.
+- **Lazy map frames.** Two sites were reported as "search incomplete" because of maps embedded with lazy loading far below the fold. Such frames never load during a scan and never answer. They are skipped now; a frame that starts loading and then hangs still makes the search incomplete.
+- **Load.** Scanning several sites in parallel on one laptop, while other test runs used the same machine, drove some scans into the hard time limit. A rerun without that load measured them. A click visit that hangs no longer takes the finished baseline down with it.
+
+**Results** against the ground truth of the earlier samples:
+
+| Sample | B | R | A |
+|---|---|---|---|
+| 71 small-business sites | 68/71 | 65/68 | 64/66 |
+| the same, three ground truths corrected from new screenshots | 71/71 | 68/68 | 65/66 |
+| person-judged sample, checked ground truth | 48/48 | 39/39 | 38/39 |
+
+Three sites of the first group now show a banner with reject and accept controls where the ground truth of the first samples has none; the screenshots of the rerun show the banner, so either the site changed or the banner was missed then. The two misses in this rerun were accept labels the tool did not know: "Okay!" next to a reject button, and one label on a site of the person-judged sample. Since then a bare "OK" or "Okay!" counts as accept when a general reject sits in the same banner (never on a pure notice); a rescan of that site found and clicked both controls, and a second full rerun after that change and a rule against age and terms gates changed no other result, except that one large site showed no banner at all in that run (its screenshots confirm it); a rescan showed the banner again and the tool found and clicked both controls.
+
+The international sites have no ground truth. Every change against the scan before the fixes was checked on screenshots: two banners (a travel site and a music platform) are recognized now and were missed before; both are real, and both clicks hit the right controls.
+
+**Clicks.** 158 completed clicks on 140 measured sites, each checked by its label: every one was a general reject or accept control. Seven attempts failed because another element covered the control, and are reported as failed clicks.
+
+## Held-out sample (2026-09-26)
+
+All numbers above come from sites the tool had been tuned on. To measure how it does on sites it has never seen, the code was frozen and a new sample was drawn before any scan: 40 sites, none of them in any earlier sample. 25 small businesses in Germany, Austria and Switzerland, two per industry from web search results in 13 industries and cities not used before (tax advisers, butchers, gyms, architects, florists, roofers, photographers, dog schools, beauticians, a bookshop, dance schools, plumbers, estate agents), and 15 large sites (retail, news, travel, services). Three could not be measured (an expired TLS certificate, two HTTP 403).
+
+**Method.** The tool scanned all 40 once. Only the second neutral screenshot (after the banner wait, before any click) of each site went into the judging page. The AI assistant judged all 37 from these images by the written rules before looking at any tool output; the owner judged 28 of them independently. Where the two differed (6 sites), the written rules decided: three pay-or-consent walls where "subscribe" had been counted as reject, "Auswahl akzeptieren" counted as reject, "OK" without any reject counted as accept, and a thin bar at the top that had been overlooked. Every difference between the judgment and the tool was then checked on all screenshots and by a rescan.
+
+**Results, blind, with the frozen code:**
+
+| | B | R | A |
+|---|---|---|---|
+| Tool vs ground truth | 37/37 | 28/30 | 27/30 |
+
+43 completed clicks, each checked by its label: every one on a general reject or accept control. All five errors were misses, never a wrong claim about a control:
+
+- "Alle optionalen ablehnen" and "Nur das Nötigste" were unknown reject wording; the first one produced a false "no reject control on the first layer" warning.
+- "Allem zustimmen" and "Ok ✓" (a check mark after "Ok", next to "Ablehnen") were not recognized as accept.
+- A notice built with a common consent script labels its "Akzeptieren" button "dismiss cookie message" for screen readers; the search by accessible name missed it.
+
+One more problem was not a miss of a control: a large site answered the automated browser with a block page ("Zugriff verweigert / Access denied") and HTTP 200. The tool measured that page and reported a missing imprint and privacy link, two false errors.
+
+All six are fixed (wording, a second search by visible text, block pages recognized by their title), each with a test that fails without the fix. A rescan of the six sites finds and clicks the right controls and refuses the block page. These after-fix results are not blind any more; the blind numbers are the ones in the table.
+
 ## Limits
 
-- **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). A second person judging independently is still missing.
+- **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). In the held-out sample the AI assistant and the owner judged independently, but the owner judged 28 of 37 sites. A second person judging a full sample is still missing.
 - **Small samples.** 71 small-business sites plus 20 large sites, almost all German-speaking. Other languages and exotic consent tools are underrepresented.
 - **One snapshot.** The baseline screenshot is taken after a fixed wait. A banner that appears later is missing from it (5 of 48 sites in the person-judged sample); the click screenshots show it. Judge ground truth from all screenshots, not from the baseline alone.
 - **First layer only.** Settings dialogs behind "Einstellungen" are not tested.
