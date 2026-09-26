@@ -127,6 +127,30 @@ Not counted: one site where the tool reported "search incomplete" and made no cl
 
 **Clicks.** Blind run: 57 completed clicks, every one on a general reject or accept control. Five further click attempts failed: the three category labels above, and two real controls hidden behind a location popup, which the tool reported as blocked. After the fixes: 58 completed clicks, all on general controls; the two blocked ones remain and are reported as such.
 
+## Rerun of all samples with the final code (2026-09-26)
+
+A review of the code from several angles led to a round of fixes (international wording, fewer false findings on non-German sites, hardening). Before merging them, every earlier sample was scanned again with the final code: the 71 small-business sites, the person-judged sample, and 25 large international sites (news, platforms, software) that the review had added. 146 URLs; 6 could not be measured (three HTTP 403, one bot check, one HTTP 500, one invalid TLS certificate). This rerun is not blind: the tool's author had seen all of these sites before.
+
+**Found and fixed during the rerun:**
+
+- **Buttons in a row of their own.** A banner whose buttons sit in a sticky button row inside the banner was no longer recognized: the new check that a control belongs to a cookie prompt stopped at the button row, where no consent words are. The check now walks on to the whole banner.
+- **Lazy map frames.** Two sites were reported as "search incomplete" because of maps embedded with lazy loading far below the fold. Such frames never load during a scan and never answer. They are skipped now; a frame that starts loading and then hangs still makes the search incomplete.
+- **Load.** Scanning several sites in parallel on one laptop, while other test runs used the same machine, drove some scans into the hard time limit. A rerun without that load measured them. A click visit that hangs no longer takes the finished baseline down with it.
+
+**Results** against the ground truth of the earlier samples:
+
+| Sample | B | R | A |
+|---|---|---|---|
+| 71 small-business sites | 68/71 | 65/68 | 64/66 |
+| the same, three ground truths corrected from new screenshots | 71/71 | 68/68 | 65/66 |
+| person-judged sample, checked ground truth | 48/48 | 39/39 | 38/39 |
+
+Three sites of the first group now show a banner with reject and accept controls where the ground truth of the first samples has none; the screenshots of the rerun show the banner, so either the site changed or the banner was missed then. The two remaining misses are accept labels the tool does not know: "Okay!" next to a reject button, and one label on a site of the person-judged sample.
+
+The international sites have no ground truth. Every change against the scan before the fixes was checked on screenshots: two banners (a travel site and a music platform) are recognized now and were missed before; both are real, and both clicks hit the right controls.
+
+**Clicks.** 158 completed clicks on 140 measured sites, each checked by its label: every one was a general reject or accept control. Seven attempts failed because another element covered the control, and are reported as failed clicks.
+
 ## Limits
 
 - **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). A second person judging independently is still missing.
