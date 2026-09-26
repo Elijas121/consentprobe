@@ -306,6 +306,13 @@ describe("consent click test (real browser)", () => {
     expect(banner.consent?.reject?.clicked).toBe(true);
   }, 30000);
 
+  it("finds a button whose aria-label differs from the text the visitor reads", async () => {
+    const r = await scan(`${fx.origin}/banner-aria-label`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: false, acceptFound: true });
+    expect(r.consent?.accept?.control?.label).toBe("Akzeptieren");
+    expect(r.consent?.accept?.clicked).toBe(true);
+  }, 30000);
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });

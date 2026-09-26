@@ -44,7 +44,8 @@ export function normalizeLabel(label: string): string {
 const REJECT_STRICT: RegExp[] = [
   /^(alles?(\s+cookies)?\s+)?(ablehnen|verweigern)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
   /^(alle\s+)?einwilligung(en)?\s+(ablehnen|verweigern)$/,
-  /^(alle\s+)?(optionalen?|nicht\s+notwendigen?|zusätzlichen?)\s+cookies\s+ablehnen$/,
+  /^(alle\s+)?(optionalen?|nicht\s+notwendigen?|zusätzlichen?)(\s+cookies)?\s+ablehnen$/,
+  /^nur\s+(das\s+)?(nötigste|notwendigste)$/,
   /^(nur\s+)?(technisch\s+)?(notwendige|erforderliche|essenzielle|essentielle)(\s+cookies)?(\s+(akzeptieren|zulassen|erlauben|verwenden|speichern))?$/,
   /^(weiter\s+)?ohne\s+(zustimmung|einwilligung|akzeptieren)(\s+(fortfahren|weiter|weiterlesen))?$/,
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
@@ -67,7 +68,7 @@ const REJECT_STRICT: RegExp[] = [
   /^(akceptuj\s+)?tylko\s+(niezbędne|wymagane|konieczne)(\s+(pliki\s+)?cookies?)?$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
-  /^(alle[ns]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
+  /^(alle[nsm]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
   /^(ja\s+)?(ich\s+)?stimme\s+zu(\s+und\s+akzeptiere\s+alle(\s+cookies)?)?$/,
   /^ich\s+akzeptiere(\s+alle)?$/,
   /^(ich\s+bin\s+)?einverstanden$/,
@@ -104,7 +105,7 @@ const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|acce
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /^\s*ok(ay)?\s*[!.]?\s*$|ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
+  /^[^a-z0-9]*ok(ay)?[^a-z0-9]*$|nötig|ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -419,8 +420,10 @@ async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pic
         const el = await frame.frameElement();
         return el.evaluate(isOverlayElement);
       }, q, false, page.mainFrame()));
-    for (const role of ["button", "link"] as const) {
-      const all = frame.getByRole(role, { name: candidates });
+    // By accessible name, and by visible text: some consent tools give their button an aria-label that
+    // differs from the text the visitor reads ("dismiss cookie message" on a button labelled "Akzeptieren").
+    for (const [role, byLabelText] of [["button", false], ["link", false], ["button", true]] as const) {
+      const all = byLabelText ? frame.getByRole(role).filter({ hasText: candidates }) : frame.getByRole(role, { name: candidates });
       const total = await ask(() => all.count(), q, 0, frame);
       const indices =
         anywhere || frameIsOverlay

@@ -289,6 +289,12 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/banner-with-terms":
         // A real cookie banner that also names the terms: still a banner.
         return html(200, page(`<h1>Shop</h1>${FOOTER}<div id="banner" role="dialog" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies für Statistik und Werbung. Mehr in unseren AGB und der Datenschutzerklärung.</p><button>Ablehnen</button><button>Zustimmen</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/banner-aria-label":
+        // A cookieconsent-style notice: the button reads "Akzeptieren", its aria-label says something else.
+        return html(200, page(`<h1>Shop</h1>${FOOTER}<div id="banner" role="dialog" style="position:fixed;top:0;left:0;right:0;background:#eee;padding:1rem">Wir verwenden Cookies, um unsere Dienste zu verbessern. <a role="button" tabindex="0" aria-label="dismiss cookie message" class="cc-btn cc-dismiss">Akzeptieren</a></div><script>document.querySelector('#banner a').addEventListener('click',function(){document.getElementById('banner').remove();});</script>`));
+      case "/access-denied":
+        // A block page served with HTTP 200 instead of the site: not measurable.
+        return html(200, `<!doctype html><html lang="de"><head><title>Zugriff verweigert / Access denied</title></head><body><h1>Zugriff verweigert</h1><p>Aus Sicherheitsgründen mussten wir den Zugriff verweigern.</p></body></html>`);
       case "/banner-many-links": {
         // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
         const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");

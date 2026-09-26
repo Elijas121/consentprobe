@@ -55,8 +55,8 @@ export class PageChallengedError extends Error {
 export function looksLikeChallenge(p: { url: string; title: string; markers: number; textLength: number; links: number }): boolean {
   const small = p.textLength < 3000 && p.links < 30;
   const url = /[?&](js_challenge|__cf_chl_[a-z_]*|cf_chl_[a-z_]*)=/i.test(p.url);
-  // Only the titles of the bot-check vendors themselves; generic words ("Security check") also title normal small pages.
-  const title = /^(just a moment|nur einen moment|attention required! \| cloudflare|pardon our interruption|verify you are (a )?human|are you a robot|checking your browser|ddos-guard)/i.test(p.title.trim());
+  // Titles of bot-check vendors and of block pages ("Access denied"); generic words ("Security check") also title normal small pages.
+  const title = /^(just a moment|nur einen moment|attention required! \| cloudflare|pardon our interruption|verify you are (a )?human|are you a robot|checking your browser|ddos-guard|access denied|zugriff verweigert)/i.test(p.title.trim());
   return small && (url || title || p.markers > 0);
 }
 

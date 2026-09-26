@@ -84,3 +84,25 @@ describe("OK labels", () => {
     expect(CANDIDATE_LABEL.test("Cookies")).toBe(false);
   });
 });
+
+describe("wording found in the held-out sample", () => {
+  it("knows these general controls", () => {
+    for (const l of ["Alle optionalen ablehnen", "ALLE OPTIONALEN ABLEHNEN", "Optionale ablehnen", "Nur das Nötigste", "Nur das Notwendigste"]) {
+      expect(isRejectLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Allem zustimmen"]) {
+      expect(isAcceptLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Ok ✓", "✓ OK"]) {
+      expect(isOkLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+  });
+  it("still rejects look-alikes", () => {
+    for (const l of ["Nur das Nötigste zeigen", "Allem zustimmen und Newsletter abonnieren", "Optionale Felder ablehnen und senden"]) {
+      expect(isRejectLabel(l) || isAcceptLabel(l), l).toBe(false);
+    }
+  });
+});
