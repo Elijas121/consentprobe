@@ -222,8 +222,34 @@ export async function changedLabel(target: Pick<Found, "locator" | "frame" | "co
   return normalizeLabel(now) === normalizeLabel(target.control.label) ? undefined : now;
 }
 
-async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
+/**
+ * Frames that can hold a banner. A lazy iframe below the fold (a map in the footer) is never loaded
+ * during a scan: it has no document, cannot show anything, and asking it never returns, which made
+ * whole searches "incomplete". A frame that did start loading but hangs still counts.
+ */
+async function searchableFrames(page: Page, q: QueryBudget): Promise<Frame[]> {
+  const out: Frame[] = [];
   for (const frame of page.frames()) {
+    if (frame !== page.mainFrame() && frame.url() === "") {
+      const parent = frame.parentFrame() ?? page.mainFrame();
+      const lazyOffscreen = await ask(
+        async () => {
+          const el = await frame.frameElement();
+          return el.evaluate((x) => (x as HTMLIFrameElement).loading === "lazy" && (x as HTMLIFrameElement).getBoundingClientRect().top > innerHeight * 1.5);
+        },
+        q,
+        false,
+        parent,
+      );
+      if (lazyOffscreen) continue;
+    }
+    out.push(frame);
+  }
+  return out;
+}
+
+async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
+  for (const frame of await searchableFrames(page, q)) {
     const locator = frame.locator(selector).first();
     if (await ask(() => locator.isVisible(), q, false, frame)) {
       return { locator, frame, control: { label: (await labelOf(locator, q, frame)) || selector, method: "cmp-selector" } };
@@ -310,7 +336,7 @@ function overlayIndices(els: Element[], max: number): number[] {
 async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
   const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
   const candidates = CANDIDATE_LABEL;
-  for (const frame of page.frames()) {
+  for (const frame of await searchableFrames(page, q)) {
     // A cross-origin banner frame is itself the overlay; everything inside it qualifies.
     const frameIsOverlay =
       frame !== page.mainFrame() &&
@@ -402,7 +428,7 @@ export async function locateControls(page: Page, waitMs: number, q: QueryBudget)
 
 /** True when a visible overlay or named consent container mentions cookies, even if no control could be recognized. */
 async function cookieOverlayVisible(page: Page, q: QueryBudget): Promise<boolean> {
-  for (const frame of page.frames()) {
+  for (const frame of await searchableFrames(page, q)) {
     const hit = await ask(
       () => frame.evaluate(() => {
         // Include the content of open shadow roots: some banners are web components.

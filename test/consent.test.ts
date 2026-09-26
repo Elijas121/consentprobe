@@ -255,6 +255,12 @@ describe("consent click test (real browser)", () => {
     expect(r.consent?.accept?.clicked).toBe(false);
   });
 
+  it("says 'no banner' plainly when the only silent frame is a lazy iframe that never loaded", async () => {
+    const r = await scan(`${fx.origin}/lazy-frame-no-banner`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.banner.incomplete).toBeUndefined();
+  });
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });

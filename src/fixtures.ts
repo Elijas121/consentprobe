@@ -242,6 +242,9 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/video-placeholder-late-banner":
         // A consent tool's content blocker in the page ("load this video") comes first in the DOM; the real banner renders later.
         return html(200, page(`<h1>Videos</h1><div class="video-consent"><p>Mit dem Laden des Videos akzeptieren Sie die Datenschutzerklärung von YouTube.</p><button type="button">Akzeptieren</button></div>${FOOTER}`, `<script>setTimeout(function(){var d=document.createElement('div');d.id='banner';d.setAttribute('role','dialog');d.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem';d.innerHTML='<p>Wir verwenden Cookies.</p><button id="rej">Alle ablehnen</button><button id="acc">Alle akzeptieren</button>';document.body.appendChild(d);d.querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){d.remove();});});},1500);</script>`));
+      case "/lazy-frame-no-banner":
+        // A lazily loaded iframe far below the fold never loads during the scan: it has no document and never answers.
+        return html(200, page(`<h1>Lazy</h1><div style="height:6000px"></div><iframe loading="lazy" src="${thirdOrigin}/embed-frame" title="map"></iframe>${FOOTER}`));
       case "/banner-many-links": {
         // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
         const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");
