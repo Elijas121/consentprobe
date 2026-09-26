@@ -477,7 +477,15 @@ describe("legal link check", () => {
     expect(direct.asked).toEqual([]);
     // A dev server the user typed may have its own legal pages checked.
     const dev = site({ "http://localhost:3000/impressum": [200] });
-    expect(await checkLink(dev, "http://localhost:3000/impressum", 30000, 1, true)).toBe(200);
+    expect(await checkLink(dev, "http://localhost:3000/impressum", 30000, 1, "localhost")).toBe(200);
+    // Only that typed host itself is exempt. A redirect away from it (here to the cloud metadata
+    // address) must not turn the check into a probe of the machine.
+    const devRedirect = site({
+      "http://localhost:3000/impressum": [302, "http://169.254.169.254/latest/meta-data/"],
+      "http://169.254.169.254/latest/meta-data/": [200],
+    });
+    expect(await checkLink(devRedirect, "http://localhost:3000/impressum", 30000, 1, "localhost")).toBeUndefined();
+    expect(devRedirect.asked).toEqual(["http://localhost:3000/impressum"]);
     const loop = site({ "https://e.de/a": [302, "/b"], "https://e.de/b": [302, "/a"] });
     expect(await checkLink(loop, "https://e.de/a", 30000, 1)).toBeUndefined();
   });

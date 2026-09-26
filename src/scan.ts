@@ -130,7 +130,9 @@ export function isLocalHost(host: string): boolean {
  * HTTP status of a legal page. A transient status gets one retry; if it stays transient the link
  * counts as unverified (undefined), because a short server hiccup must not become "link broken".
  * Refusals (401, 403 …) are unverified too: only 404 and 410, or a success, are reported.
- * Redirects are followed by hand, so a page cannot bounce the check into the local network.
+ * Redirects are followed by hand, so a page cannot bounce the check into the local network. Only the
+ * hostname in `localHost` (the host of a site the user typed as local, e.g. a dev server) is exempt;
+ * every other local address stays blocked, also on a later hop.
  */
 export async function checkLink(
   context: {
@@ -141,12 +143,13 @@ export async function checkLink(
   href: string,
   timeoutMs: number,
   retryDelayMs = 1500,
-  allowLocal = false,
+  localHost?: string,
 ): Promise<number | undefined> {
   const get = async (): Promise<number | undefined> => {
     let target = href;
     for (let hop = 0; hop <= 5; hop += 1) {
-      if (!allowLocal && isLocalHost(new URL(target).hostname)) return undefined;
+      const host = new URL(target).hostname;
+      if (isLocalHost(host) && host !== localHost) return undefined;
       const r = await context.request
         .get(target, { timeout: Math.min(timeoutMs, 20000), failOnStatusCode: false, maxRedirects: 0 })
         .catch(() => undefined);
@@ -290,10 +293,12 @@ async function runBaseline(
     const legal = findLegalLinks(anchors);
     // Read the cookies before the link check: its requests share the cookie jar and may set cookies of their own.
     const cookiesBeforeLinkCheck = await context.cookies();
+    // A page may point its legal links anywhere; never let it make consentprobe probe the local network.
+    // Only a site the user typed as local (a dev server) may have its legal pages checked there, and
+    // only the typed host itself: a redirect from it to another local address stays blocked.
+    const typedHost = new URL(url).hostname;
     for (const link of [legal.imprint, legal.privacy] as LegalLink[]) {
-      // A page may point its legal links anywhere; never let it make consentprobe probe the local network.
-      // Only a site the user typed as local (a dev server) may have its legal pages checked there.
-      if (link.found && link.href) link.status = await checkLink(context, link.href, timeoutMs, 1500, isLocalHost(new URL(url).hostname));
+      if (link.found && link.href) link.status = await checkLink(context, link.href, timeoutMs, 1500, isLocalHost(typedHost) ? typedHost : undefined);
     }
 
     const measured = {
