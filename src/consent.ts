@@ -416,6 +416,8 @@ export interface SessionOptions {
   firstParty: string[];
   screenshotDir?: string;
   identity?: VisitorIdentity;
+  /** Basic-auth credentials from the URL (password-protected test sites). */
+  httpCredentials?: { username: string; password: string };
 }
 
 async function shot(page: Page, dir: string | undefined, name: string): Promise<void> {
@@ -430,7 +432,7 @@ export async function runConsentSession(
   action: "reject" | "accept",
   o: SessionOptions,
 ): Promise<{ banner: ConsentBanner; session: ConsentSession }> {
-  const context = await browser.newContext(visitorContextOptions(o.identity));
+  const context = await browser.newContext(visitorContextOptions(o.identity, o.httpCredentials));
   try {
     const raw: RawRequest[] = [];
     // The page reports the exact moment of the physical press (in any frame, before the site's own

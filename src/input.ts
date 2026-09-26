@@ -1,10 +1,14 @@
 import { CATEGORY_SEVERITY } from "./rules.js";
 import type { Category, TrackerRule } from "./types.js";
 
-/** Most people type "example.de", not "https://example.de". Anything without a scheme gets https://. */
+/**
+ * Most people type "example.de", not "https://example.de". Anything without a scheme gets https://,
+ * except localhost and IP addresses, which are nearly always local test servers without TLS.
+ */
 export function normalizeUrlInput(input: string): string {
   const trimmed = input.trim();
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const local = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?([/?#]|$)/i.test(trimmed);
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `${local ? "http" : "https"}://${trimmed}`;
   let url: URL;
   try {
     url = new URL(withScheme);
@@ -17,11 +21,15 @@ export function normalizeUrlInput(input: string): string {
   return url.href;
 }
 
-/** A duration in milliseconds: a whole number, at least `min`. */
+/** Longest accepted duration: ten minutes. Larger values overflow Node's timers and end a scan at once. */
+const MAX_MS = 600_000;
+
+/** A duration in milliseconds: a whole number, at least `min`, at most ten minutes. */
 export function parseMs(option: string, value: string, min: number): number {
   if (!/^\d+$/.test(value.trim())) throw new Error(`--${option} needs a whole number of milliseconds, got "${value}".`);
   const ms = Number(value);
   if (ms < min) throw new Error(`--${option} must be at least ${min} ms, got ${ms}.`);
+  if (ms > MAX_MS) throw new Error(`--${option} must be at most ${MAX_MS} ms (ten minutes), got ${ms}.`);
   return ms;
 }
 
@@ -48,8 +56,13 @@ export function parseRules(json: string): TrackerRule[] {
     if (!Array.isArray(r.hosts) || r.hosts.length === 0 || !r.hosts.every((h) => typeof h === "string" && h.length > 0)) {
       throw new Error(`${where} ("${r.id}") needs "hosts": a non-empty list of host names.`);
     }
-    if (r.pathPrefix !== undefined && (typeof r.pathPrefix !== "string" || !r.pathPrefix.startsWith("/"))) {
-      throw new Error(`${where} ("${r.id}") has a "pathPrefix" that does not start with "/".`);
+    // A host is matched exactly or as a parent domain; a scheme, path, port or wildcard can never match.
+    const bad = (r.hosts as string[]).find((h) => !/^[a-z0-9-]+(\.[a-z0-9-]+)*$/i.test(h));
+    if (bad !== undefined) {
+      throw new Error(`${where} ("${r.id}") has the host "${bad}". Use a bare host name such as "tracker.example.com" (no scheme, path, port or "*"); subdomains match automatically.`);
+    }
+    if (r.pathPrefix !== undefined && (typeof r.pathPrefix !== "string" || !/^\/[^?#]*$/.test(r.pathPrefix) || (r.pathPrefix.length > 1 && r.pathPrefix.endsWith("/")))) {
+      throw new Error(`${where} ("${r.id}") has the "pathPrefix" "${String(r.pathPrefix)}". It must start with "/", must not end with "/" and cannot contain "?" or "#".`);
     }
     return {
       id: r.id,

@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright";
-import { locateControls, runConsentSession } from "./consent.js";
+import { locateControls, runConsentSession, type SessionOptions } from "./consent.js";
 import { bounded, newBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, visitorIdentity, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
@@ -59,7 +59,10 @@ export function looksLikeChallenge(p: { url: string; title: string; markers: num
 
 function describeStatus(status: number): string {
   if (status === 404 || status === 410) return `The page was not found (HTTP ${status}). Check the URL.`;
-  if (status === 401 || status === 403 || status === 429) {
+  if (status === 401) {
+    return "The page asks for a login (HTTP 401). For a password-protected test site, put the credentials into the URL (https://user:password@host/); they are used for the visit and left out of the report.";
+  }
+  if (status === 403 || status === 429) {
     return `The site refused the automated browser (HTTP ${status}, usually bot protection or rate limiting). No reliable measurement is possible.`;
   }
   if (status >= 500) return `The server answered with an error (HTTP ${status}). Try again later.`;
@@ -86,8 +89,14 @@ export class PageNotMeasurableError extends Error {
 /** Turn Playwright's long "browser missing" error into one actionable line. */
 export function explainLaunchError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
-  if (/executable doesn't exist|browserType\.launch/i.test(message) && /install/i.test(message)) {
-    return new Error("No browser found. Install one with: npx playwright install chromium (or use --browser chrome).");
+  if (/distribution '?chrome'? is not found|chrome.*not found at/i.test(message)) {
+    return new Error("Google Chrome is not installed. Install it, or leave out --browser chrome to use the bundled Chromium (install it once with: consentprobe --install-browser).");
+  }
+  if (/missing dependencies|shared libraries|install-deps|--with-deps/i.test(message)) {
+    return new Error("Chromium could not start because system libraries are missing. On Linux run once, with root rights: consentprobe --install-browser --with-deps");
+  }
+  if (/executable doesn't exist/i.test(message)) {
+    return new Error("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
   }
   return err instanceof Error ? err : new Error(message);
 }
@@ -168,9 +177,10 @@ async function runBaseline(
   screenshotDir?: string,
   identity?: VisitorIdentity,
   bannerWaitMs = 0,
+  httpCredentials?: { username: string; password: string },
 ): Promise<Baseline> {
   // A fresh context has no cookies or storage: it behaves like a first-time visitor.
-  const context = await browser.newContext(visitorContextOptions(identity));
+  const context = await browser.newContext(visitorContextOptions(identity, httpCredentials));
   try {
     const page = await context.newPage();
     await applyIdentity(page, identity);
@@ -280,6 +290,32 @@ async function runBaseline(
   }
 }
 
+/** Query strings and fragments can carry session ids or personal data; reports keep origin and path. */
+function withoutQuery(href: string): string {
+  try {
+    const u = new URL(href);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return href;
+  }
+}
+
+function legalWithoutQuery(link: LegalLink): LegalLink {
+  return {
+    ...link,
+    ...(link.href ? { href: withoutQuery(link.href) } : {}),
+    ...(link.candidate ? { candidate: { ...link.candidate, href: withoutQuery(link.candidate.href) } } : {}),
+  };
+}
+
+function failedVisit(action: "reject" | "accept", err: unknown): { banner: ConsentBanner; session: ConsentSession } {
+  const reason = (err instanceof Error ? err.message : String(err)).split("\n")[0]?.slice(0, 200) ?? "";
+  return {
+    banner: { detected: false, rejectFound: false, acceptFound: false, incomplete: true },
+    session: { action, clicked: false, requestsAfter: [], cookiesBefore: [], cookiesAfter: [], error: `visit failed: ${reason}` },
+  };
+}
+
 function mergeBanner(a?: ConsentBanner, b?: ConsentBanner): ConsentBanner {
   return {
     detected: Boolean(a?.detected || b?.detected),
@@ -304,6 +340,12 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Only http and https URLs can be scanned, got "${url.protocol}".`);
   }
+  // Credentials in the URL (a password-protected test site) are used for the visit, never reported.
+  const httpCredentials = url.username
+    ? { username: decodeURIComponent(url.username), password: decodeURIComponent(url.password) }
+    : undefined;
+  url.username = "";
+  url.password = "";
   const settleMs = options.settleMs ?? DEFAULTS.settleMs;
   const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   const bannerWaitMs = options.bannerWaitMs ?? DEFAULTS.bannerWaitMs;
@@ -320,7 +362,11 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     });
   try {
     const identity = await bounded(visitorIdentity(browser), 10000, () => undefined);
-    const sessionOpts = { timeoutMs, settleMs, bannerWaitMs, firstParty, screenshotDir: options.screenshotDir, identity };
+    const sessionOpts: SessionOptions = { timeoutMs, settleMs, bannerWaitMs, firstParty, screenshotDir: options.screenshotDir, identity, httpCredentials };
+    // A failing click visit (the site blocks a second visit, a navigation error) must not throw away
+    // the finished baseline: it becomes an untested session with its reason.
+    const visit = (action: "reject" | "accept", o: SessionOptions) =>
+      runConsentSession(browser, url.href, action, o).catch((err: unknown) => failedVisit(action, err));
     // Three independent visits run in parallel; each has its own cookie jar.
     // Hard stop: whatever a page does, a scan must end (it runs unattended in CI).
     const deadlineMs = timeoutMs + 2 * bannerWaitMs + 2 * settleMs + 45000;
@@ -328,19 +374,20 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
       throw new Error(`The scan did not finish within ${Math.round(ms / 1000)} s and was stopped. The page may be blocking the browser.`);
     };
     let [base, reject, accept] = await bounded(Promise.all([
-      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity, bannerWaitMs),
-      clickTest ? runConsentSession(browser, url.href, "reject", sessionOpts) : undefined,
-      clickTest ? runConsentSession(browser, url.href, "accept", sessionOpts) : undefined,
+      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity, bannerWaitMs, httpCredentials),
+      clickTest ? visit("reject", sessionOpts) : undefined,
+      clickTest ? visit("accept", sessionOpts) : undefined,
     ]), deadlineMs, stopped(deadlineMs));
 
     // Banners can appear late. When one visit saw the banner and the other did not, the other is
     // repeated once with a longer wait, so a click is not silently left untested.
     const retryMs = timeoutMs + 2 * bannerWaitMs + 2 * settleMs + 30000;
     const retry = { ...sessionOpts, bannerWaitMs: bannerWaitMs * 2 };
+    // The retry is a second chance: if it fails or runs out of time, the first result stays.
     if (reject && accept && accept.banner.detected && !reject.banner.detected) {
-      reject = await bounded(runConsentSession(browser, url.href, "reject", retry), retryMs, stopped(retryMs));
+      reject = (await bounded(visit("reject", retry), retryMs, () => undefined)) ?? reject;
     } else if (reject && accept && reject.banner.detected && !accept.banner.detected) {
-      accept = await bounded(runConsentSession(browser, url.href, "accept", retry), retryMs, stopped(retryMs));
+      accept = (await bounded(visit("accept", retry), retryMs, () => undefined)) ?? accept;
     }
 
     let consent: ConsentTest | undefined;
@@ -363,7 +410,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
             severity: "info" as const,
             message:
               "The site redirected the first visit to a separate consent page. consentprobe measured that page, not the site behind it: imprint and privacy links are not checked, and a full-page consent choice is not clicked.",
-            evidence: [base.finalUrl],
+            evidence: [withoutQuery(base.finalUrl)],
           },
         ]
       : [];
@@ -381,12 +428,15 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     return {
       tool: { name: "consentprobe", version: VERSION },
       url: url.href,
-      finalUrl: base.finalUrl,
+      finalUrl: withoutQuery(base.finalUrl),
       scannedAt: new Date().toISOString(),
       phase: "before-consent",
       requests: base.requests,
       cookies: base.cookies,
-      legal: base.legal,
+      legal: {
+        imprint: legalWithoutQuery(base.legal.imprint),
+        privacy: legalWithoutQuery(base.legal.privacy),
+      },
       consent,
       findings,
       summary: {

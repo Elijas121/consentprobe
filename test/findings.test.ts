@@ -147,6 +147,17 @@ describe("fairness fixes from the critic review", () => {
     expect(f.find((x) => x.id === "reject-search-incomplete")?.severity).toBe("info");
   });
 
+  it("reports a click visit that failed as not tested, not as a failed click", () => {
+    const t: ConsentTest = {
+      banner: { detected: true, rejectFound: false, acceptFound: true },
+      reject: { action: "reject", clicked: false, requestsAfter: [], cookiesBefore: [], cookiesAfter: [], error: "visit failed: net::ERR_CONNECTION_RESET" },
+      accept: { action: "accept", clicked: true, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] },
+    };
+    const f = findingsForConsent(t, []);
+    expect(f.find((x) => x.id === "consent-reject-visit-failed")?.message).toContain("was not tested");
+    expect(f.find((x) => x.id === "consent-reject-click-failed")).toBeUndefined();
+  });
+
   it("rates cookieless analytics and performance monitoring as a warning, Google Analytics as an error", () => {
     const f = findingsForRequests([req("https://plausible.io/api/event"), req("https://bam.nr-data.net/1/x"), req("https://www.google-analytics.com/g/collect")]);
     expect(f.find((x) => x.id === "third-party-before-consent:plausible")?.severity).toBe("warn");

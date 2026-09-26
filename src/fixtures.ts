@@ -227,6 +227,12 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/scroll-wrapper-mockup":
         // A smooth-scroll site: the whole page sits in a fixed wrapper. The banner mock-up in the content is no overlay.
         return html(200, `<!doctype html><html lang="de"><head><title>Agency</title></head><body><div id="smooth-wrapper" style="position:fixed;inset:0;overflow:auto"><main><h1>Wir bauen Cookie-Banner</h1><div class="demo"><p>Wir verwenden Cookies.</p><button type="button">Alle akzeptieren</button><button type="button">Nur notwendige Cookies</button></div></main>${FOOTER}</div></body></html>`);
+      case "/protected": {
+        // A password-protected test site (HTTP basic auth, user "test", password "secret").
+        const ok = req.headers.authorization === `Basic ${Buffer.from("test:secret").toString("base64")}`;
+        if (!ok) return html(401, "<h1>Login</h1>", { "www-authenticate": 'Basic realm="staging"' });
+        return html(200, page(`<h1>Staging</h1><footer><a href="/impressum?session=abc123">Impressum</a> <a href="/datenschutz#top">Datenschutz</a></footer>`));
+      }
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));

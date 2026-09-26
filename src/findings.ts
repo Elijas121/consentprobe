@@ -433,7 +433,14 @@ export function findingsForConsent(
   }
 
   for (const session of [reject, accept]) {
-    if (session?.error) {
+    if (session?.error?.startsWith("visit failed")) {
+      findings.push({
+        id: `consent-${session.action}-visit-failed`,
+        severity: "info",
+        message: `The ${session.action} visit could not be completed (${session.error}), so ${session.action} was not tested.`,
+        evidence: [],
+      });
+    } else if (session?.error) {
       findings.push({
         id: `consent-${session.action}-click-failed`,
         severity: "info",

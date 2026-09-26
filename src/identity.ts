@@ -67,8 +67,15 @@ export async function visitorIdentity(browser: Browser): Promise<VisitorIdentity
 }
 
 /** Options for a fresh visitor context: German locale and, if needed, the regular user agent. */
-export function visitorContextOptions(identity?: VisitorIdentity): BrowserContextOptions {
-  return identity ? { locale: "de-DE", userAgent: identity.userAgent } : { locale: "de-DE" };
+export function visitorContextOptions(
+  identity?: VisitorIdentity,
+  httpCredentials?: { username: string; password: string },
+): BrowserContextOptions {
+  return {
+    locale: "de-DE",
+    ...(identity ? { userAgent: identity.userAgent } : {}),
+    ...(httpCredentials ? { httpCredentials } : {}),
+  };
 }
 
 /**

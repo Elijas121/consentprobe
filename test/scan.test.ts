@@ -123,6 +123,16 @@ describe("scan (real browser)", () => {
     expect(paths).toContain(`/al/${encodeURIComponent("de-DE,de;q=0.9")}.gif`);
   });
 
+  it("explains a login wall, and measures a protected test site with credentials that stay out of the report", async () => {
+    await expect(scan(`${fx.origin}/protected`, opts())).rejects.toThrow(/asks for a login \(HTTP 401\)/);
+    const withLogin = fx.origin.replace("http://", "http://test:secret@");
+    const r = await scan(`${withLogin}/protected`, opts());
+    expect(r.url).toBe(`${fx.origin}/protected`);
+    expect(JSON.stringify(r)).not.toContain("secret");
+    expect(r.legal.imprint.href).toBe(`${fx.origin}/impressum`);
+    expect(r.legal.privacy.href).toBe(`${fx.origin}/datenschutz`);
+  });
+
   it("refuses to measure a bot check that answers HTTP 200", async () => {
     await expect(scan(`${fx.origin}/bot-challenge`, opts())).rejects.toThrow(/bot check/);
   });
