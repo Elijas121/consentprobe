@@ -95,8 +95,30 @@ export function explainLaunchError(err: unknown): Error {
 const TRANSIENT = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /**
+ * Statuses that prove the page is gone. Everything else above 400 (401, 403, 405, 451 …) usually
+ * means the server refused this plain HTTP client, not the visitor, so the link stays unverified.
+ */
+const GONE = new Set([404, 410]);
+
+/**
+ * True for hosts on the machine or the local network (localhost, private and link-local IPs). A page
+ * must not make consentprobe request those, e.g. a cloud metadata address in a CI runner.
+ */
+export function isLocalHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || !h.includes(".") && !h.includes(":")) return true;
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  return h === "::1" || /^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h) || h.startsWith("::ffff:");
+}
+
+/**
  * HTTP status of a legal page. A transient status gets one retry; if it stays transient the link
  * counts as unverified (undefined), because a short server hiccup must not become "link broken".
+ * Refusals (401, 403 …) are unverified too: only 404 and 410, or a success, are reported.
  */
 export async function checkLink(
   context: { request: { get: (url: string, o: { timeout: number; failOnStatusCode: boolean }) => Promise<{ status(): number }> } },
@@ -114,7 +136,8 @@ export async function checkLink(
     await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     status = await get();
   }
-  return status !== undefined && TRANSIENT.has(status) ? undefined : status;
+  if (status === undefined || TRANSIENT.has(status)) return undefined;
+  return status < 400 || GONE.has(status) ? status : undefined;
 }
 
 const DEFAULTS = { settleMs: 3000, timeoutMs: 30000, bannerWaitMs: 4000 };
@@ -227,7 +250,8 @@ async function runBaseline(
     const lang = await bounded(page.evaluate(() => document.documentElement.lang || ""), 5000, () => "");
     const legal = findLegalLinks(anchors);
     for (const link of [legal.imprint, legal.privacy] as LegalLink[]) {
-      if (link.found && link.href) {
+      // A page may point its legal links anywhere; never let it make consentprobe probe the local network.
+      if (link.found && link.href && (!isLocalHost(new URL(link.href).hostname) || isLocalHost(pageHost))) {
         link.status = await checkLink(context, link.href, timeoutMs);
       }
     }

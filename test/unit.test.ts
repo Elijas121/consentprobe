@@ -4,7 +4,7 @@ import { classifyRequests, describeConsentSignal, findingsForCookies, findingsFo
 import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel, isRejectLike } from "../src/consent.js";
 import { findLegalLinks } from "../src/legal.js";
 import { formatMarkdown, formatText } from "../src/report.js";
-import { checkLink, explainLaunchError, looksGermanSite, looksLikeChallenge } from "../src/scan.js";
+import { checkLink, explainLaunchError, isLocalHost, looksGermanSite, looksLikeChallenge } from "../src/scan.js";
 import { VERSION } from "../src/version.js";
 import { readFileSync } from "node:fs";
 import { explainNavigationError } from "../src/navigate.js";
@@ -386,5 +386,15 @@ describe("legal link check", () => {
   it("keeps a real 404 without retrying", async () => {
     const c = ctx([404, 200]);
     expect(await checkLink(c, "https://e.de/d", 30000, 1)).toBe(404);
+  });
+  it("treats a refusal of the plain HTTP client as unverified, not as broken", async () => {
+    for (const s of [401, 403, 405, 451]) expect(await checkLink(ctx([s]), "https://e.de/d", 30000, 1), String(s)).toBeUndefined();
+    expect(await checkLink(ctx([410]), "https://e.de/d", 30000, 1)).toBe(410);
+  });
+  it("recognizes hosts on the machine or the local network", () => {
+    for (const h of ["localhost", "a.localhost", "intranet", "127.0.0.1", "10.1.2.3", "169.254.169.254", "172.20.0.1", "192.168.1.1", "100.64.0.1", "[::1]", "fd00::1", "fe80::1"]) {
+      expect(isLocalHost(h), h).toBe(true);
+    }
+    for (const h of ["example.com", "8.8.8.8", "172.32.0.1", "2001:db8::1"]) expect(isLocalHost(h), h).toBe(false);
   });
 });
