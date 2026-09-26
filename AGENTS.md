@@ -63,7 +63,7 @@ docs/VALIDATION.md  validation method, numbers and limits
 pnpm install                            # also builds dist/ (prepare script)
 node dist/cli.js --install-browser      # once
 pnpm typecheck
-pnpm test                               # 142 tests, about two minutes, real browser
+pnpm test                               # 151 tests, about two and a half minutes, real browser
 pnpm build
 node dist/cli.js <url> --screenshots ../cp-runs/evidence
 scripts/scan-list.sh ../cp-runs/urls.txt ../cp-runs/out   # real-site regression, then read ../cp-runs/out/*.json
