@@ -4,7 +4,9 @@ import { chromium, type Browser } from "playwright";
 import { locateControls, runConsentSession, type SessionOptions } from "./consent.js";
 import { bounded, newBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, visitorIdentity, type HttpCredentials, type VisitorIdentity } from "./identity.js";
-import { explainNavigationError, openPage } from "./navigate.js";
+import { explainNavigationError, isConsentWallRedirect, openPage } from "./navigate.js";
+
+export { isConsentWallRedirect };
 import { BUILT_IN_RULES } from "./rules.js";
 import {
   classifyCookies,
@@ -178,18 +180,6 @@ const DEFAULTS = { settleMs: 3000, timeoutMs: 30000, bannerWaitMs: 4000 };
 
 type Baseline = Pick<ScanResult, "finalUrl" | "requests" | "cookies" | "legal"> & { lang: string; consentWall: boolean };
 
-/**
- * Some sites answer a first visit with a redirect to a separate consent page (a "consent wall",
- * e.g. /consent-management/ or consent.example.com). Measured naively, that page lacks the site's
- * footer and would produce false "no imprint" findings.
- */
-export function isConsentWallRedirect(requested: string, final: string): boolean {
-  const a = new URL(requested);
-  const b = new URL(final);
-  if (a.host === b.host && a.pathname === b.pathname) return false;
-  return /(^|[.-])(consent|cookie-?consent|cookiewall|privacy-?gate)([.-]|$)/i.test(b.hostname) ||
-    /\/(consent|consent-management|cookie-?consent|cookiewall|cookie-wall|privacy-?gate)(\/|$)/i.test(b.pathname);
-}
 
 /** Visit the page without touching any banner: this is the "before consent" state. */
 async function runBaseline(
@@ -457,7 +447,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
             id: "consent-wall-page",
             severity: "info" as const,
             message:
-              "The site redirected the first visit to a separate consent page. consentprobe measured that page, not the site behind it: imprint and privacy links are not checked, and a full-page consent choice is not clicked.",
+              "The site redirected the first visit to a separate consent page. The measurement before consent describes that page; imprint and privacy links are not checked there. Its consent choice is tested like a banner.",
             evidence: [withoutQuery(base.finalUrl)],
           },
         ]

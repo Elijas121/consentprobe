@@ -171,6 +171,11 @@ describe("scan (real browser)", () => {
     expect(ids(r)).not.toContain("imprint-link-missing");
     expect(ids(r)).not.toContain("privacy-link-missing");
     expect(ids(r)).not.toContain("no-consent-banner-detected");
+    // The page is the consent choice: its accept control is clicked although it sits in no overlay.
+    expect(r.consent?.accept?.control?.label).toBe("Akzeptieren und weiter");
+    expect(r.consent?.accept?.clicked).toBe(true);
+    expect(r.consent?.reject?.control).toBeUndefined();
+    expect(ids(r)).toContain("no-reject-control-on-first-layer");
   });
 
   it("recognizes consent-wall redirects by host or path only", async () => {

@@ -4,7 +4,7 @@ import type { Browser, Frame, Locator, Page } from "playwright";
 import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, type HttpCredentials, type VisitorIdentity } from "./identity.js";
-import { explainNavigationError, openPage } from "./navigate.js";
+import { explainNavigationError, isConsentWallRedirect, openPage } from "./navigate.js";
 import { recordRequests, type RawRequest } from "./record.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
 
@@ -287,7 +287,7 @@ const PLAIN_MARK = "data-consentprobe-control";
  * clickable elements inside an overlay whose whole text is short and passes the candidate filter;
  * the strict label check still decides afterwards. Buttons and real links are left to the role search.
  */
-function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
+function markPlainControls(args: { source: string; flags: string; mark: string; max: number; anywhere: boolean }): number {
   const candidate = new RegExp(args.source, args.flags);
   // Walk out of open shadow roots too: a web-component banner's content is not part of the host and
   // not reachable through a "body *" query. Same walk as isOverlayElement.
@@ -344,7 +344,7 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
     const text = ((el as HTMLElement).innerText || "").replace(/\s+/g, " ").trim();
     if (!text || text.length > args.max || !candidate.test(text)) continue;
     const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0 || !inOverlay(el)) continue;
+    if (rect.width === 0 || rect.height === 0 || (!args.anywhere && !inOverlay(el))) continue;
     el.setAttribute(args.mark, "");
     marked += 1;
   }
@@ -390,7 +390,11 @@ function overlayIndices(els: Element[], max: number): number[] {
   return out;
 }
 
-async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
+/**
+ * `anywhere`: the whole page is the consent choice (a consent wall the site redirected to), so
+ * controls count without sitting in an overlay.
+ */
+async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
   const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
   const candidates = CANDIDATE_LABEL;
   for (const frame of await searchableFrames(page, q)) {
@@ -405,7 +409,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       const all = frame.getByRole(role, { name: candidates });
       const total = await ask(() => all.count(), q, 0, frame);
       const indices =
-        frameIsOverlay
+        anywhere || frameIsOverlay
           ? [...Array(Math.min(total, 15)).keys()]
           : await ask(() => all.evaluateAll(overlayIndices, 15), q, [] as number[], frame);
       for (const i of indices) {
@@ -413,7 +417,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
         const label = await labelOf(locator, q, frame);
         if (!label || label.length > MAX_LABEL) continue;
-        if (!(await inOverlay(locator, frame, page, q))) continue;
+        if (!anywhere && !(await inOverlay(locator, frame, page, q))) continue;
         if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
         if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
         const found: Found = { locator, frame, control: { label, method: "text" } };
@@ -423,7 +427,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       }
     }
     if (out.reject && out.accept) continue;
-    const args = { source: candidates.source, flags: candidates.flags, mark: PLAIN_MARK, max: MAX_LABEL };
+    const args = { source: candidates.source, flags: candidates.flags, mark: PLAIN_MARK, max: MAX_LABEL, anywhere };
     if ((await ask(() => frame.evaluate(markPlainControls, args), q, 0, frame)) === 0) continue;
     const plain = frame.locator(`[${PLAIN_MARK}]`);
     const count = Math.min(await ask(() => plain.count(), q, 0, frame), 15);
@@ -442,7 +446,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
   return out;
 }
 
-async function scanOnce(page: Page, q: QueryBudget): Promise<Controls> {
+async function scanOnce(page: Page, q: QueryBudget, anywhere = false): Promise<Controls> {
   const controls: Controls = {};
   for (const cmp of CMPS) {
     const reject = await bySelector(page, cmp.reject, q);
@@ -454,7 +458,7 @@ async function scanOnce(page: Page, q: QueryBudget): Promise<Controls> {
       break;
     }
   }
-  const text = await byText(page, q);
+  const text = await byText(page, q, anywhere);
   controls.reject ??= text.reject;
   controls.accept ??= text.accept;
   if (!controls.reject) controls.rejectLike = text.rejectLike;
@@ -462,15 +466,15 @@ async function scanOnce(page: Page, q: QueryBudget): Promise<Controls> {
 }
 
 /** Poll until a banner control shows up (banners often render late), then re-scan once for the second button. */
-export async function locateControls(page: Page, waitMs: number, q: QueryBudget): Promise<Controls> {
+export async function locateControls(page: Page, waitMs: number, q: QueryBudget, anywhere = false): Promise<Controls> {
   const deadline = Date.now() + waitMs;
   do {
     // The scan may have been stopped (deadline, unresponsive page); do not keep asking a closed page.
     if (page.isClosed()) return {};
-    const first = await scanOnce(page, q);
+    const first = await scanOnce(page, q, anywhere);
     if (first.accept || first.reject) {
       await page.waitForTimeout(300);
-      const second = await scanOnce(page, q);
+      const second = await scanOnce(page, q, anywhere);
       return {
         cmp: second.cmp ?? first.cmp,
         reject: second.reject ?? first.reject,
@@ -567,7 +571,9 @@ export async function runConsentSession(
       throw explainNavigationError(err, o.timeoutMs);
     });
 
-    const controls = await locateControls(page, o.bannerWaitMs, q);
+    // On a consent wall the site redirected to, the whole page is the consent choice.
+    const wall = isConsentWallRedirect(url, page.url());
+    const controls = await locateControls(page, o.bannerWaitMs, q, wall);
     const banner: ConsentBanner = {
       detected: Boolean(controls.accept || controls.reject),
       cmp: controls.cmp,

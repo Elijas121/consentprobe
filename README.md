@@ -55,7 +55,7 @@ Technical findings only. This is not legal advice and does not assess whether a 
 | Services of the site's own company (Google Fonts on youtube.com), what accepting loads, unclassified third parties, consent-platform and Cloudflare cookies | info |
 | A legal link the server refused to the checker (401, 403 …) or that timed out: not verifiable | info |
 | A cookie overlay whose controls cannot be automated (e.g. a checkbox plus "save") | info |
-| A redirect to a separate consent page; legal links are not judged there | info |
+| A redirect to a separate consent page: its choice is tested like a banner, legal links are not judged there | info |
 | Parts of the page did not respond, so the banner or reject search is incomplete | info |
 | A click or a visit that could not be tested (banner in one visit only, control covered, visit failed) | info |
 
@@ -152,7 +152,7 @@ if (result.summary.error > 0) process.exitCode = 1;
 
 - **Location.** A banner may not appear from your IP address (some sites show one only in the EU), and a site may behave differently there. "No banner recognized" does not mean the site has none.
 - **Browser identity.** Headless Chromium calls itself "HeadlessChrome", and many large sites then hide their banner and behave differently. `consentprobe` therefore presents itself like the same Chromium in a normal window (user agent, client hints, German language). It does not hide that the browser is automated (`navigator.webdriver` stays `true`), and a site that answers with a bot check or HTTP 403 is not measured.
-- **First layer only.** Choices behind "Settings" are not explored. Full-page consent walls are recognized but not clicked.
+- **First layer only.** Choices behind "Settings" are not explored. A site that redirects to a separate full-page consent page is tested on that page; its legal links are not judged there.
 - **One page per run.** No crawling; a password-protected test site works with credentials in the URL (they are sent only to that origin).
 - **Wording.** Controls are matched by known consent-platform selectors and by whole labels in German, English, French, Italian, Spanish, Dutch and Polish, only inside an overlay or a container the site names as its cookie banner, and only when that overlay talks about cookies, consent or privacy. Unusual wording is reported as "not found", never guessed.
 - **The tracker list is hand-curated and incomplete.** Unknown hosts appear as info. Lists such as DuckDuckGo Tracker Radar, Disconnect and Ghostery TrackerDB are CC BY-NC-SA and therefore not bundled.
