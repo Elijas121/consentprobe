@@ -1,8 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium, type Browser } from "playwright";
-import { runConsentSession } from "./consent.js";
-import { bounded } from "./bounded.js";
+import { locateControls, runConsentSession } from "./consent.js";
+import { bounded, newBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, visitorIdentity, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
 import { BUILT_IN_RULES } from "./rules.js";
@@ -134,6 +134,7 @@ async function runBaseline(
   firstParty: string[],
   screenshotDir?: string,
   identity?: VisitorIdentity,
+  bannerWaitMs = 0,
 ): Promise<Baseline> {
   // A fresh context has no cookies or storage: it behaves like a first-time visitor.
   const context = await browser.newContext(visitorContextOptions(identity));
@@ -222,7 +223,7 @@ async function runBaseline(
       }
     }
 
-    return {
+    const measured = {
       finalUrl,
       requests: classifyRequests(rawRequests, pageHost, firstParty),
       cookies: classifyCookies(await context.cookies(), pageHost, firstParty),
@@ -230,6 +231,14 @@ async function runBaseline(
       lang,
       consentWall,
     };
+    if (screenshotDir && bannerWaitMs > 0) {
+      // Second neutral screenshot, taken after the measurement is complete: a banner that renders
+      // late is missing from baseline.png but visible here. Waits until a banner control shows up
+      // (at most bannerWaitMs); nothing is clicked and nothing seen now enters the measurement.
+      await locateControls(page, bannerWaitMs, newBudget());
+      await page.screenshot({ path: join(screenshotDir, "baseline-2-after-banner-wait.png"), timeout: 10000 }).catch(() => undefined);
+    }
+    return measured;
   } finally {
     await context.close();
   }
@@ -275,12 +284,12 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     const sessionOpts = { timeoutMs, settleMs, bannerWaitMs, firstParty, screenshotDir: options.screenshotDir, identity };
     // Three independent visits run in parallel; each has its own cookie jar.
     // Hard stop: whatever a page does, a scan must end (it runs unattended in CI).
-    const deadlineMs = timeoutMs + bannerWaitMs + 2 * settleMs + 45000;
+    const deadlineMs = timeoutMs + 2 * bannerWaitMs + 2 * settleMs + 45000;
     const stopped = (ms: number) => () => {
       throw new Error(`The scan did not finish within ${Math.round(ms / 1000)} s and was stopped. The page may be blocking the browser.`);
     };
     let [base, reject, accept] = await bounded(Promise.all([
-      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity),
+      runBaseline(browser, url.href, timeoutMs, settleMs, firstParty, options.screenshotDir, identity, bannerWaitMs),
       clickTest ? runConsentSession(browser, url.href, "reject", sessionOpts) : undefined,
       clickTest ? runConsentSession(browser, url.href, "accept", sessionOpts) : undefined,
     ]), deadlineMs, stopped(deadlineMs));

@@ -110,6 +110,7 @@ describe("consent click test (real browser)", () => {
     expect((await readdir(dir)).sort()).toEqual([
       "accept-1-before-click.png",
       "accept-2-after-click.png",
+      "baseline-2-after-banner-wait.png",
       "baseline.png",
       "reject-1-before-click.png",
       "reject-2-after-click.png",
