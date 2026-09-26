@@ -138,9 +138,7 @@ const isOverlayElement = (el: Element): boolean => {
     const position = getComputedStyle(n).position;
     if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
     const role = n.getAttribute("role");
-    if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
-      return true;
-    }
+    if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
     // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
     if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
       if (((n as HTMLElement).innerText || "").length < 4000) return true;
