@@ -49,6 +49,8 @@ const REJECT_STRICT: RegExp[] = [
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
   /^((accept|allow|use)\s+)?(only\s+)?(strictly\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
   /^continue\s+without\s+(accepting|consent)$/,
+  // Google Funding Choices, InMobi (Quantcast) and Klaro word their general reject as a refusal of consent.
+  /^(nicht\s+einwilligen|ich\s+(willige\s+nicht\s+ein|stimme\s+nicht\s+zu|lehne\s+ab)|do\s+not\s+consent|don\s+t\s+consent|disagree|i\s+(decline|disagree|do\s+not\s+(accept|agree)))$/,
   // French, Italian, Spanish, Dutch, Polish. "Reject and subscribe" (pay or okay) stays out on purpose.
   /^(tout\s+)?refuser(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
   /^(je\s+refuse(\s+tout)?|continuer\s+sans\s+accepter)$/,
@@ -70,6 +72,8 @@ const ACCEPT_STRICT: RegExp[] = [
   /^geht\s+klar$/,
   /^(accept|allow|agree)(\s+(all|everything))?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
   /^i\s+(agree|accept)(\s+all)?(\s+cookies)?$/,
+  // Google Funding Choices ("Consent" / "Einwilligen") and Klaro ("Das ist ok").
+  /^(consent|das\s+ist\s+ok)$/,
   // French, Italian, Spanish, Dutch, Polish. A bare "Autoriser" is left out: push-notification prompts use it.
   /^(tout\s+)?accepter(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
   /^(j\s+accepte(\s+tout)?|tout\s+autoriser|autoriser\s+tous\s+les\s+cookies)$/,
@@ -91,7 +95,7 @@ const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|acce
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
+  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -132,6 +136,28 @@ const isChoicePart = (el: Element): boolean =>
   el.hasAttribute("aria-checked") ||
   el.hasAttribute("aria-pressed") ||
   el.querySelector("input, select, textarea") !== null;
+
+/**
+ * True when the control's surroundings talk about cookies, consent, privacy or tracking. "Erlauben"
+ * and "Ablehnen" also sit on push-notification and newsletter prompts; there they must never be
+ * taken for a cookie decision. Stops at page-sized containers, so the rest of the page does not count.
+ */
+const hasConsentContext = (el: Element): boolean => {
+  const words = /cookie|consent|einwillig|zustimm|datenschutz|privacy|privatsph|tracking|partner|personalis|confidentialit|donn[ée]es personnelles|riservatezza|privacidad|toestemming|prywatno/i;
+  let n: Element | null = el.parentElement;
+  for (let depth = 0; n && n.tagName !== "BODY" && depth < 12; depth += 1, n = n.parentElement) {
+    const text = (n as HTMLElement).innerText || "";
+    if (text.length > 6000) return false;
+    if (words.test(text)) return true;
+    // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
+    const position = getComputedStyle(n).position;
+    const role = n.getAttribute("role");
+    if (position === "fixed" || position === "sticky" || role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
+      return false;
+    }
+  }
+  return false;
+};
 
 async function inOverlay(locator: Locator, frame: Frame, page: Page, q: QueryBudget): Promise<boolean> {
   if (await ask(() => locator.evaluate(isOverlayElement), q, false, frame)) return true;
@@ -232,6 +258,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         if (!label || label.length > MAX_LABEL) continue;
         if (!(await inOverlay(locator, frame, page, q))) continue;
         if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
+        if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
         const found: Found = { locator, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
@@ -248,6 +275,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
       const label = await labelOf(locator, q, frame);
       if (!label || label.length > MAX_LABEL) continue;
+      if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
       const found: Found = { locator, control: { label, method: "text" } };
       if (isRejectLabel(label)) out.reject ??= found;
       else if (isAcceptLabel(label)) out.accept ??= found;

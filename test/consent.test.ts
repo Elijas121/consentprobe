@@ -212,6 +212,13 @@ describe("consent click test (real browser)", () => {
     expect(r.consent?.accept?.clicked).toBe(true);
   });
 
+  it("never takes a push-notification prompt for a cookie banner", async () => {
+    const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.reject?.clicked).toBe(false);
+    expect(r.consent?.accept?.clicked).toBe(false);
+  });
+
   it("never clicks control-like words that are plain text in an overlay", async () => {
     const r = await scan(`${fx.origin}/overlay-text-not-control`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });

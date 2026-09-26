@@ -178,6 +178,9 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/bot-challenge":
         // A bot check that answers HTTP 200 (like a "just a moment" interstitial): not the site.
         return html(200, `<!doctype html><html lang="de"><head><title>Just a moment...</title></head><body><div id="challenge-running">Checking your browser before accessing the site.</div></body></html>`);
+      case "/push-prompt":
+        // A push-notification prompt in a fixed overlay: "Ablehnen" and "Erlauben" are no cookie decision.
+        return html(200, page(`<h1>Shop</h1>${FOOTER}<div role="dialog" style="position:fixed;top:0;left:30%;width:40%;background:#fff;padding:1rem"><p>Möchten Sie Benachrichtigungen über neue Angebote erhalten?</p><button type="button">Ablehnen</button><button type="button">Erlauben</button></div>`));
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));

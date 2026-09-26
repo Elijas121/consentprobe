@@ -46,6 +46,21 @@ describe("banner wording seen on large sites", () => {
     }
   });
 
+  it("recognizes the refusal wording of Google Funding Choices, InMobi and Klaro", () => {
+    for (const l of ["Nicht einwilligen", "Do not consent", "DISAGREE", "Ich lehne ab", "I decline", "Ich stimme nicht zu", "Alleen essentiële cookies"]) {
+      expect(isRejectLabel(l), l).toBe(true);
+      expect(isAcceptLabel(l), l).toBe(false);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Consent", "Das ist ok"]) {
+      expect(isAcceptLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+    }
+    for (const l of ["Consent settings", "Manage consent", "Einwilligung verwalten", "Ich stimme nicht zu und abonniere"]) {
+      expect(isRejectLabel(l) || isAcceptLabel(l), l).toBe(false);
+    }
+  });
+
   it("does not take partial or opposite wording as a general accept", () => {
     for (const l of ["Allen Zwecken widersprechen", "Allen Partnern zustimmen", "Geht klar, aber nur notwendige", "Klar"]) {
       expect(isAcceptLabel(l), l).toBe(false);
