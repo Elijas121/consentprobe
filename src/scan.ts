@@ -65,6 +65,15 @@ function describeStatus(status: number): string {
   return `The page answered HTTP ${status}, so it shows an error page and no reliable measurement is possible.`;
 }
 
+/**
+ * German rules apply: the page language is German, or the domain is German-speaking. A .ch domain
+ * alone says little (Swiss sites are also French or Italian), so it counts only without a page language.
+ */
+export function looksGermanSite(host: string, pageLang: string): boolean {
+  const lang = pageLang.toLowerCase();
+  return lang.startsWith("de") || /\.(de|at|li)$/.test(host) || (/\.ch$/.test(host) && lang === "");
+}
+
 /** The page answered with an error status, so any measurement would describe the error page. */
 export class PageNotMeasurableError extends Error {
   constructor(public readonly status: number) {
@@ -314,7 +323,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     }
 
     const host = new URL(base.finalUrl).hostname;
-    const looksGerman = base.lang.toLowerCase().startsWith("de") || /\.(de|at|ch)$/.test(host);
+    const looksGerman = looksGermanSite(host, base.lang);
     const imprintCheck: ImprintMode =
       imprintMode === "never" ? "off" : imprintMode === "always" || looksGerman ? "check" : "skipped-auto";
     const wall = base.consentWall

@@ -15,15 +15,16 @@ interface Kind {
   path: RegExp;
 }
 
+// German and English, plus the French and Italian wording of multilingual Swiss sites.
 const IMPRINT: Kind = {
-  label: /\b(impressum|imprint|legal notice|anbieterkennung)\b/i,
-  exact: /^(impressum|imprint|legal notice|anbieterkennung)$/i,
-  path: /\/(impressum|imprint|legal-notice|anbieterkennung)([/.\-_?#]|$)/i,
+  label: /(^|[^\p{L}])(impressum|imprint|legal notice|anbieterkennung|mentions l[ée]gales|note legali)(?=$|[^\p{L}])/iu,
+  exact: /^(impressum|imprint|legal notice|anbieterkennung|mentions l[ée]gales|note legali)$/iu,
+  path: /\/(impressum|imprint|legal-notice|anbieterkennung|mentions-legales|note-legali)([/.\-_?#]|$)/i,
 };
 const PRIVACY: Kind = {
-  label: /\b(datenschutz\w*|privacy\w*|data protection)\b/i,
-  exact: /^(datenschutz(erklärung|erklaerung|hinweise|bestimmungen|richtlinie)?|privacy( policy| notice| statement)?|data protection( policy| notice)?|datenschutz (&|und) cookies)$/i,
-  path: /\/(datenschutz\w*|privacy\w*|data-protection)([/.\-_?#]|$)/i,
+  label: /(^|[^\p{L}])(datenschutz\p{L}*|privacy\p{L}*|data protection|protection des donn[ée]es|politique de confidentialit[ée]|confidentialit[ée]|informativa (sulla )?privacy|protezione dei dati)(?=$|[^\p{L}])/iu,
+  exact: /^(datenschutz(erklärung|erklaerung|hinweise|bestimmungen|richtlinie)?|privacy( policy| notice| statement)?|data protection( policy| notice)?|datenschutz (&|und) cookies|protection des donn[ée]es|politique de confidentialit[ée]|confidentialit[ée]|informativa (sulla )?privacy|protezione dei dati)$/iu,
+  path: /\/(datenschutz\w*|privacy\w*|data-protection|protection-des-donnees|confidentialite|politique-de-confidentialite|protezione-dei-dati)([/.\-_?#]|$)/i,
 };
 
 const MAX_LABEL = 40;

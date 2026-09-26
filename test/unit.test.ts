@@ -4,7 +4,9 @@ import { classifyRequests, describeConsentSignal, findingsForCookies, findingsFo
 import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel, isRejectLike } from "../src/consent.js";
 import { findLegalLinks } from "../src/legal.js";
 import { formatMarkdown, formatText } from "../src/report.js";
-import { checkLink, explainLaunchError, looksLikeChallenge } from "../src/scan.js";
+import { checkLink, explainLaunchError, looksGermanSite, looksLikeChallenge } from "../src/scan.js";
+import { VERSION } from "../src/version.js";
+import { readFileSync } from "node:fs";
 import { explainNavigationError } from "../src/navigate.js";
 import { ask, bounded, newBudget } from "../src/bounded.js";
 import type { ScanResult } from "../src/types.js";
@@ -211,6 +213,38 @@ describe("legal link detection", () => {
   it("finds a footer link by its path even with an unusual label", () => {
     const r = findLegalLinks([{ href: "https://e.de/rechtliches/impressum.html", text: "Rechtliches", inFooter: true }]);
     expect(r.imprint.found).toBe(true);
+  });
+});
+
+describe("which sites get German rules", () => {
+  it("uses the page language first and a .ch domain only without one", () => {
+    expect(looksGermanSite("www.example.com", "de-DE")).toBe(true);
+    expect(looksGermanSite("www.example.de", "en")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "de-CH")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "fr-CH")).toBe(false);
+    expect(looksGermanSite("www.example.ch", "it")).toBe(false);
+    expect(looksGermanSite("www.example.com", "en")).toBe(false);
+  });
+  it("finds French and Italian legal links of Swiss sites", () => {
+    const r = findLegalLinks([
+      { href: "https://e.ch/fr/mentions-legales", text: "Mentions légales", inFooter: true },
+      { href: "https://e.ch/fr/confidentialite", text: "Politique de confidentialité", inFooter: true },
+    ]);
+    expect(r.imprint.found).toBe(true);
+    expect(r.privacy.found).toBe(true);
+    const italian = findLegalLinks([
+      { href: "https://e.ch/it/note-legali", text: "Note legali", inFooter: true },
+      { href: "https://e.ch/it/privacy", text: "Informativa sulla privacy", inFooter: true },
+    ]);
+    expect(italian.imprint.found).toBe(true);
+    expect(italian.privacy.found).toBe(true);
+  });
+  it("keeps the version in the code equal to package.json", () => {
+    expect(VERSION).toBe(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+  });
+  it("counts HubSpot's cookie banner as a consent platform, not as tracking", () => {
+    expect(matchRule(new URL("https://js.hs-banner.com/v2/123/banner.js"))?.category).toBe("consent-platform");
   });
 });
 
