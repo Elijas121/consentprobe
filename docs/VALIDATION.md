@@ -145,7 +145,7 @@ A review of the code from several angles led to a round of fixes (international 
 | the same, three ground truths corrected from new screenshots | 71/71 | 68/68 | 65/66 |
 | person-judged sample, checked ground truth | 48/48 | 39/39 | 38/39 |
 
-Three sites of the first group now show a banner with reject and accept controls where the ground truth of the first samples has none; the screenshots of the rerun show the banner, so either the site changed or the banner was missed then. The two remaining misses are accept labels the tool does not know: "Okay!" next to a reject button, and one label on a site of the person-judged sample.
+Three sites of the first group now show a banner with reject and accept controls where the ground truth of the first samples has none; the screenshots of the rerun show the banner, so either the site changed or the banner was missed then. The two misses in this rerun were accept labels the tool did not know: "Okay!" next to a reject button, and one label on a site of the person-judged sample. Since then a bare "OK" or "Okay!" counts as accept when a general reject sits in the same banner (never on a pure notice); a rescan of that site found and clicked both controls, and a second full rerun after that change and a rule against age and terms gates changed no other result, except that one large site showed no banner at all in that run (its screenshots confirm it); a rescan showed the banner again and the tool found and clicked both controls.
 
 The international sites have no ground truth. Every change against the scan before the fixes was checked on screenshots: two banners (a travel site and a music platform) are recognized now and were missed before; both are real, and both clicks hit the right controls.
 
