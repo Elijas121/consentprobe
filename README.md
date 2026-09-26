@@ -167,6 +167,7 @@ Tested on 71 real websites of small businesses in three samples, two of them jud
 - Banner, reject control and accept control detected correctly on 69/69, 66/66 and 64/64 sites. On a blind sample before tuning it was 25/26, 22/24 and 20/23; every miss was "not found", never a wrong claim.
 - 70 clicks, none on the wrong control. In the final rerun of all samples: 158 clicks on 140 sites, each checked by its label, none on the wrong control.
 - Person-judged blind sample (48 sites): 47/47, 36/39 and 36/39 in the blind first run. The errors: three category checkbox labels ("Essential", "Notwendige Cookies") taken for a reject control (all three clicks failed, so nothing was measured after a wrong click, but the missing-reject warning was not raised), and two accept labels not recognized. All fixed; on the same sites the tool now gets 48/48, 39/39 and 38/39 (final rerun, 2026-09-26).
+- Held-out sample (40 sites never seen before, code frozen, judged blind): banner 37/37, reject 28/30, accept 27/30, 43 clicks all on the right control. The misses (unknown wording, a button whose screen-reader label differs from its text) and one block page taken for the site are fixed since.
 - Three real cases of tracking after reject, each confirmed with before/after screenshots.
 
 That sample had no large sites. A later check of 21 large German sites found that several of them treat headless browsers differently; the fixes are in this version, and [docs/VALIDATION.md](docs/VALIDATION.md) describes what was found. Treat the numbers as evidence, not as a benchmark.

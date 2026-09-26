@@ -151,9 +151,31 @@ The international sites have no ground truth. Every change against the scan befo
 
 **Clicks.** 158 completed clicks on 140 measured sites, each checked by its label: every one was a general reject or accept control. Seven attempts failed because another element covered the control, and are reported as failed clicks.
 
+## Held-out sample (2026-09-26)
+
+All numbers above come from sites the tool had been tuned on. To measure how it does on sites it has never seen, the code was frozen and a new sample was drawn before any scan: 40 sites, none of them in any earlier sample. 25 small businesses in Germany, Austria and Switzerland, two per industry from web search results in 13 industries and cities not used before (tax advisers, butchers, gyms, architects, florists, roofers, photographers, dog schools, beauticians, a bookshop, dance schools, plumbers, estate agents), and 15 large sites (retail, news, travel, services). Three could not be measured (an expired TLS certificate, two HTTP 403).
+
+**Method.** The tool scanned all 40 once. Only the second neutral screenshot (after the banner wait, before any click) of each site went into the judging page. The AI assistant judged all 37 from these images by the written rules before looking at any tool output; the owner judged 28 of them independently. Where the two differed (6 sites), the written rules decided: three pay-or-consent walls where "subscribe" had been counted as reject, "Auswahl akzeptieren" counted as reject, "OK" without any reject counted as accept, and a thin bar at the top that had been overlooked. Every difference between the judgment and the tool was then checked on all screenshots and by a rescan.
+
+**Results, blind, with the frozen code:**
+
+| | B | R | A |
+|---|---|---|---|
+| Tool vs ground truth | 37/37 | 28/30 | 27/30 |
+
+43 completed clicks, each checked by its label: every one on a general reject or accept control. All five errors were misses, never a wrong claim about a control:
+
+- "Alle optionalen ablehnen" and "Nur das Nötigste" were unknown reject wording; the first one produced a false "no reject control on the first layer" warning.
+- "Allem zustimmen" and "Ok ✓" (a check mark after "Ok", next to "Ablehnen") were not recognized as accept.
+- A notice built with a common consent script labels its "Akzeptieren" button "dismiss cookie message" for screen readers; the search by accessible name missed it.
+
+One more problem was not a miss of a control: a large site answered the automated browser with a block page ("Zugriff verweigert / Access denied") and HTTP 200. The tool measured that page and reported a missing imprint and privacy link, two false errors.
+
+All six are fixed (wording, a second search by visible text, block pages recognized by their title), each with a test that fails without the fix. A rescan of the six sites finds and clicks the right controls and refuses the block page. These after-fix results are not blind any more; the blind numbers are the ones in the table.
+
 ## Limits
 
-- **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). A second person judging independently is still missing.
+- **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). In the held-out sample the AI assistant and the owner judged independently, but the owner judged 28 of 37 sites. A second person judging a full sample is still missing.
 - **Small samples.** 71 small-business sites plus 20 large sites, almost all German-speaking. Other languages and exotic consent tools are underrepresented.
 - **One snapshot.** The baseline screenshot is taken after a fixed wait. A banner that appears later is missing from it (5 of 48 sites in the person-judged sample); the click screenshots show it. Judge ground truth from all screenshots, not from the baseline alone.
 - **First layer only.** Settings dialogs behind "Einstellungen" are not tested.
