@@ -88,6 +88,13 @@ const ACCEPT_STRICT: RegExp[] = [
   /^(za)?akceptuj(ę)?(\s+wszystk(ie|o))?$/,
   /^(zgadzam\s+się|zezwól\s+na\s+wszystkie)$/,
 ];
+/**
+ * "OK" / "Okay!" is an accept only next to a real reject in the same banner. On a pure notice
+ * ("only necessary cookies are used") there is nothing to consent to, so it is never clicked there.
+ */
+const OK_LABEL = /^ok(ay)?$/;
+export const isOkLabel = (label: string): boolean => OK_LABEL.test(normalizeLabel(label));
+
 /** Loose: anything that mentions rejecting. Reported, never clicked. */
 const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse|refuser|rifiut|rechaz|weiger|afwijz|odrzu/i;
 const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow|accett|acept|akcept|akkoord/i;
@@ -97,7 +104,7 @@ const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|acce
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
+  /^\s*ok(ay)?\s*[!.]?\s*$|ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -224,6 +231,8 @@ interface Controls {
   accept?: Found;
   /** A reject-like label that is not a general reject (e.g. an opt-out for one service). */
   rejectLike?: string;
+  /** An "OK" control: counts as accept only next to a reject in the same banner. */
+  ok?: Found;
 }
 
 async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<string> {
@@ -394,8 +403,8 @@ function overlayIndices(els: Element[], max: number): number[] {
  * `anywhere`: the whole page is the consent choice (a consent wall the site redirected to), so
  * controls count without sitting in an overlay.
  */
-async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
-  const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
+async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pick<Controls, "reject" | "accept" | "rejectLike" | "ok">> {
+  const out: Pick<Controls, "reject" | "accept" | "rejectLike" | "ok"> = {};
   const candidates = CANDIDATE_LABEL;
   for (const frame of await searchableFrames(page, q)) {
     // A cross-origin banner frame is itself the overlay; everything inside it qualifies.
@@ -423,6 +432,7 @@ async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pic
         const found: Found = { locator, frame, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
+        else if (isOkLabel(label)) out.ok ??= found;
         else if (isRejectLike(label)) out.rejectLike ??= label;
       }
     }
@@ -440,10 +450,41 @@ async function byText(page: Page, q: QueryBudget, anywhere = false): Promise<Pic
       const found: Found = { locator, frame, control: { label, method: "text" } };
       if (isRejectLabel(label)) out.reject ??= found;
       else if (isAcceptLabel(label)) out.accept ??= found;
+      else if (isOkLabel(label)) out.ok ??= found;
       else if (isRejectLike(label)) out.rejectLike ??= label;
     }
   }
   return out;
+}
+
+/** True when both controls sit in the same overlay (the nearest fixed, sticky, dialog or named consent box). */
+async function sameBanner(a: Found, b: Found, q: QueryBudget): Promise<boolean> {
+  if (a.frame !== b.frame) return false;
+  const other = await ask(() => b.locator.elementHandle({ timeout: 1000 }), q, null, b.frame);
+  if (!other) return false;
+  return ask(
+    () =>
+      a.locator.evaluate((x, y) => {
+        const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+        let box: Element | null = null;
+        // Start above the control: consent tools name the buttons themselves too ("cc-btn submit-consent").
+        for (let n: Element | null = up(x); n && n.tagName !== "BODY"; n = up(n)) {
+          const style = getComputedStyle(n);
+          const role = n.getAttribute("role");
+          const named = /cookie|consent|gdpr/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`);
+          if (style.position === "fixed" || style.position === "sticky" || role === "dialog" || role === "alertdialog" || n.tagName === "DIALOG" || named) {
+            box = n;
+            break;
+          }
+        }
+        if (!box) return false;
+        for (let n: Element | null = y as Element; n; n = up(n)) if (n === box) return true;
+        return false;
+      }, other),
+    q,
+    false,
+    a.frame,
+  );
 }
 
 async function scanOnce(page: Page, q: QueryBudget, anywhere = false): Promise<Controls> {
@@ -461,6 +502,7 @@ async function scanOnce(page: Page, q: QueryBudget, anywhere = false): Promise<C
   const text = await byText(page, q, anywhere);
   controls.reject ??= text.reject;
   controls.accept ??= text.accept;
+  if (!controls.accept && text.ok && controls.reject && (await sameBanner(text.ok, controls.reject, q))) controls.accept = text.ok;
   if (!controls.reject) controls.rejectLike = text.rejectLike;
   return controls;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel } from "../src/consent.js";
+import { CANDIDATE_LABEL, isAcceptLabel, isOkLabel, isRejectLabel } from "../src/consent.js";
 
 describe("banner wording seen on large sites", () => {
   const accept = ["Geht klar", "Allen Zwecken zustimmen", "Allen zustimmen", "Allen Cookies zustimmen", "Alle Cookies zulassen", "Accept everything 🍪", "I Accept All"];
@@ -70,5 +70,17 @@ describe("banner wording seen on large sites", () => {
     for (const l of ["Allen Zwecken widersprechen", "Allen Partnern zustimmen", "Geht klar, aber nur notwendige", "Klar"]) {
       expect(isAcceptLabel(l), l).toBe(false);
     }
+  });
+});
+
+describe("OK labels", () => {
+  it("knows a bare OK or Okay, and only those", () => {
+    for (const l of ["OK", "Ok", "Okay!", " okay. "]) {
+      expect(isOkLabel(l), l).toBe(true);
+      expect(CANDIDATE_LABEL.test(l), l).toBe(true);
+      expect(isAcceptLabel(l), l).toBe(false);
+    }
+    for (const l of ["OK, verstanden", "Cookies", "Booking", "Okay, alle ablehnen"]) expect(isOkLabel(l), l).toBe(false);
+    expect(CANDIDATE_LABEL.test("Cookies")).toBe(false);
   });
 });

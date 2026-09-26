@@ -274,6 +274,12 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/contact-hidden-captcha":
         // A small contact page with a hidden bot-protection element: an ordinary page, not a bot check.
         return html(200, page(`<h1>Kontakt</h1><p>Schreiben Sie uns.</p><form><input type="email"></form><div id="px-captcha" style="display:none"></div>${FOOTER}`));
+      case "/banner-okay":
+        // "Okay!" next to a real reject in the same banner is the accept.
+        return html(200, page(`<h1>Okay</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies und andere Technologien.</p><button class="cc-btn">Einstellungen</button><button class="cc-btn cc-deny">Ablehnen</button><button class="cc-btn cc-allow submit-consent">Okay!</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
+      case "/ok-in-other-bar":
+        // The reject sits in the cookie banner; the "OK" belongs to a separate notice bar and is no accept.
+        return html(200, page(`<h1>Two bars</h1>${FOOTER}<div id="notice" style="position:fixed;top:0;left:0;right:0;background:#eee">Wir nutzen Cookies nur für den Warenkorb. <button>OK</button></div><div id="banner" role="dialog" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies für Statistik.</p><button>Einstellungen</button><button>Alle ablehnen</button></div><script>document.querySelectorAll('#banner button').forEach(function(b){b.addEventListener('click',function(){document.getElementById('banner').remove();});});</script>`));
       case "/banner-many-links": {
         // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
         const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");
