@@ -5,6 +5,7 @@ import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
 import { applyIdentity, visitorContextOptions, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
+import { recordRequests, type RawRequest } from "./record.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
 
 interface CmpDef {
@@ -49,6 +50,7 @@ const REJECT_STRICT: RegExp[] = [
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
   /^((accept|allow|use)\s+)?(only\s+)?(strictly\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
   /^continue\s+without\s+(accepting|consent)$/,
+  /^(reject|decline|deny|refuse)\s+(all\s+)?(optional|non\s+essential|nonessential|non\s+necessary|additional|unnecessary)\s+cookies$/,
   // Google Funding Choices, InMobi (Quantcast) and Klaro word their general reject as a refusal of consent.
   /^(nicht\s+einwilligen|ich\s+(willige\s+nicht\s+ein|stimme\s+nicht\s+zu|lehne\s+ab)|do\s+not\s+consent|don\s+t\s+consent|disagree|i\s+(decline|disagree|do\s+not\s+(accept|agree)))$/,
   // French, Italian, Spanish, Dutch, Polish. "Reject and subscribe" (pay or okay) stays out on purpose.
@@ -375,7 +377,7 @@ export async function runConsentSession(
 ): Promise<{ banner: ConsentBanner; session: ConsentSession }> {
   const context = await browser.newContext(visitorContextOptions(o.identity));
   try {
-    const raw: { url: string; resourceType: string }[] = [];
+    const raw: RawRequest[] = [];
     // The page reports the exact moment of the physical press (in any frame, before the site's own
     // handlers run). Requests before that moment are "before the click", even if they arrive while
     // a screenshot is taken. Armed only right before our own click.
@@ -392,7 +394,7 @@ export async function runConsentSession(
     await applyIdentity(page, o.identity);
     const q: QueryBudget = newBudget();
     page.setDefaultTimeout(Math.min(o.timeoutMs, 10000));
-    page.on("request", (req) => raw.push({ url: req.url(), resourceType: req.resourceType() }));
+    recordRequests(page, raw);
 
     await openPage(page, url, o.timeoutMs).catch((err: unknown) => {
       throw explainNavigationError(err, o.timeoutMs);
@@ -407,8 +409,10 @@ export async function runConsentSession(
       rejectLike: controls.rejectLike,
       overlayHint: controls.accept || controls.reject ? undefined : await cookieOverlayVisible(page, q),
     };
-    // A frozen frame hides controls: never report "no banner" when parts of the page did not answer.
+    // A frozen frame hides controls: never report "no banner" when parts of the page did not answer,
+    // and never "no reject control" when the search for it did not finish.
     if (q.timeouts > 0 && !banner.detected) banner.incomplete = true;
+    if (q.timeouts > 0 && banner.detected && !banner.rejectFound) banner.rejectSearchIncomplete = true;
     const target = action === "reject" ? controls.reject : controls.accept;
     const session: ConsentSession = { action, clicked: false, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] };
     if (!target) {

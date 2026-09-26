@@ -135,3 +135,33 @@ describe("legal links without href", () => {
     expect(findLegalLinks([{ href: "", text: "Mehr zum Datenschutz", inFooter: true, scripted: true }]).privacy.found).toBe(false);
   });
 });
+
+describe("fairness fixes from the critic review", () => {
+  it("says the reject search was incomplete instead of claiming there is no reject control", () => {
+    const t: ConsentTest = {
+      banner: { detected: true, rejectFound: false, acceptFound: true, rejectSearchIncomplete: true },
+      accept: { action: "accept", clicked: true, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] },
+    };
+    const f = findingsForConsent(t, []);
+    expect(f.find((x) => x.id === "no-reject-control-on-first-layer")).toBeUndefined();
+    expect(f.find((x) => x.id === "reject-search-incomplete")?.severity).toBe("info");
+  });
+
+  it("rates cookieless analytics and performance monitoring as a warning, Google Analytics as an error", () => {
+    const f = findingsForRequests([req("https://plausible.io/api/event"), req("https://bam.nr-data.net/1/x"), req("https://www.google-analytics.com/g/collect")]);
+    expect(f.find((x) => x.id === "third-party-before-consent:plausible")?.severity).toBe("warn");
+    expect(f.find((x) => x.id === "third-party-before-consent:plausible")?.message).toContain("stores nothing on the device");
+    expect(f.find((x) => x.id === "third-party-before-consent:newrelic")?.severity).toBe("warn");
+    expect(f.find((x) => x.id === "third-party-before-consent:google-analytics")?.severity).toBe("error");
+  });
+
+  it("recognizes HubSpot and Microsoft Advertising tracking cookies", () => {
+    const f = findingsForCookies([
+      { name: "hubspotutk", domain: "shop.example", thirdParty: false, expires: 1 },
+      { name: "_uetvid", domain: "shop.example", thirdParty: false, expires: 1 },
+    ]);
+    const ids = f.map((x) => x.id);
+    expect(ids).toContain("tracker-cookie-before-consent:hubspot");
+    expect(ids).toContain("tracker-cookie-before-consent:microsoft-advertising");
+  });
+});

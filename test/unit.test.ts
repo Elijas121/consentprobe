@@ -248,6 +248,41 @@ describe("which sites get German rules", () => {
   });
 });
 
+describe("request classification details", () => {
+  it("drops requests the browser blocked itself and reads the Consent Mode state from Floodlight paths", () => {
+    const r = classifyRequests(
+      [
+        { url: "https://tracker.example/px.gif", resourceType: "image", blocked: true },
+        { url: "https://ad.doubleclick.net/activity;src=1;gcs=G100;ord=1", resourceType: "image" },
+      ],
+      "www.shop.example",
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0]?.consentSignal).toBe("G100");
+  });
+  it("marks requests made inside a third-party frame and keeps its fonts out of the site's findings", () => {
+    const r = classifyRequests(
+      [
+        { url: "https://fonts.gstatic.com/s/roboto/a.woff2", resourceType: "font", frameUrl: "https://www.youtube-nocookie.com/embed/x" },
+        { url: "https://fonts.gstatic.com/s/roboto/b.woff2", resourceType: "font", frameUrl: "https://www.shop.example/" },
+      ],
+      "www.shop.example",
+    );
+    expect(r[0]?.embeddedIn).toBe("www.youtube-nocookie.com");
+    expect(r[1]?.embeddedIn).toBeUndefined();
+    const embeddedOnly = findingsForRequests([r[0]!]);
+    expect(embeddedOnly.find((f) => f.id === "third-party-before-consent:google-fonts")).toBeUndefined();
+    expect(findingsForRequests(r).find((f) => f.id === "third-party-before-consent:google-fonts")?.message).toContain("1 request(s)");
+  });
+  it("finds Austrian and older German imprint wording and treats a lone Kontakt link as uncertain", () => {
+    expect(findLegalLinks([{ href: "https://e.at/offenlegung", text: "Offenlegung", inFooter: true }]).imprint.found).toBe(true);
+    expect(findLegalLinks([{ href: "https://e.de/ak", text: "Anbieterkennzeichnung", inFooter: true }]).imprint.found).toBe(true);
+    const contact = findLegalLinks([{ href: "https://e.de/kontakt", text: "Kontakt", inFooter: true }]).imprint;
+    expect(contact.found).toBe(false);
+    expect(contact.candidate?.text).toBe("Kontakt");
+  });
+});
+
 describe("bot-challenge pages", () => {
   const page = { url: "https://example.com/", title: "Example", markers: 0, textLength: 500, links: 5 };
   it("recognizes challenge pages by URL, title or marker, only when the page is small", () => {

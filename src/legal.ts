@@ -17,9 +17,9 @@ interface Kind {
 
 // German and English, plus the French and Italian wording of multilingual Swiss sites.
 const IMPRINT: Kind = {
-  label: /(^|[^\p{L}])(impressum|imprint|legal notice|anbieterkennung|mentions l[ée]gales|note legali)(?=$|[^\p{L}])/iu,
-  exact: /^(impressum|imprint|legal notice|anbieterkennung|mentions l[ée]gales|note legali)$/iu,
-  path: /\/(impressum|imprint|legal-notice|anbieterkennung|mentions-legales|note-legali)([/.\-_?#]|$)/i,
+  label: /(^|[^\p{L}])(impressum|imprint|legal notice|anbieterkenn(ung|zeichnung)|offenlegung|mentions l[ée]gales|note legali)(?=$|[^\p{L}])/iu,
+  exact: /^(impressum|imprint|legal notice|anbieterkenn(ung|zeichnung)|offenlegung|mentions l[ée]gales|note legali)$/iu,
+  path: /\/(impressum|imprint|legal-notice|anbieterkenn(ung|zeichnung)|offenlegung|mentions-legales|note-legali)([/.\-_?#]|$)/i,
 };
 const PRIVACY: Kind = {
   label: /(^|[^\p{L}])(datenschutz\p{L}*|privacy\p{L}*|data protection|protection des donn[ée]es|politique de confidentialit[ée]|confidentialit[ée]|informativa (sulla )?privacy|protezione dei dati)(?=$|[^\p{L}])/iu,
@@ -84,7 +84,11 @@ export function findLegalLinks(anchors: RawAnchor[]): { imprint: LegalLink; priv
     if (best) return { found: true, href: best.href, text: best.text, inFooter: best.inFooter };
     const byScript = scripted.find((a) => kind.exact.test(a.text.replace(/\s+/g, " ").replace(/[.:]+$/, "").trim()));
     if (byScript) return { found: true, text: byScript.text, inFooter: byScript.inFooter, scripted: true };
-    return weak ? { found: false, candidate: { href: weak.href, text: weak.text } } : { found: false };
+    if (weak) return { found: false, candidate: { href: weak.href, text: weak.text } };
+    // Courts have accepted "Kontakt" as the link to the provider details. It cannot be verified here,
+    // so it is reported as an uncertain candidate, never as found and never as missing.
+    const contact = kind === IMPRINT ? real.find((a) => a.inFooter && /^(kontakt|contact)$/i.test(a.text.trim())) : undefined;
+    return contact ? { found: false, candidate: { href: contact.href, text: contact.text } } : { found: false };
   };
   return { imprint: resolve(IMPRINT), privacy: resolve(PRIVACY) };
 }

@@ -21,6 +21,10 @@ export interface TrackerRule {
   /** Hostnames; a request matches if its host equals one of these or is a subdomain. */
   hosts: string[];
   pathPrefix?: string;
+  /** Overrides the category's severity, e.g. for analytics that stores nothing on the device. */
+  severity?: Severity;
+  /** Overrides the category's explanation in the finding. */
+  hint?: string;
 }
 
 export interface RequestRecord {
@@ -31,6 +35,8 @@ export interface RequestRecord {
   thirdParty: boolean;
   /** Another domain of the same company as the site (e.g. "Google" for gstatic.com on youtube.com): not counted as third party. */
   sameOperator?: string;
+  /** Host of the third-party frame that made the request (e.g. an embedded video player), not the site itself. */
+  embeddedIn?: string;
   /**
    * Google Consent Mode state sent with the request (the `gcs` parameter, e.g. "G100" = ad and
    * analytics storage denied). Kept on its own because the query string is otherwise dropped.
@@ -84,6 +90,8 @@ export interface ConsentBanner {
   overlayHint?: boolean;
   /** Parts of the page did not respond during detection, so "not found" is not reliable. */
   incomplete?: boolean;
+  /** An accept control was found, but parts of the page did not respond while searching for a reject control. */
+  rejectSearchIncomplete?: boolean;
 }
 
 /** One visit in which the visitor clicked the reject or the accept control. */

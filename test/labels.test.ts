@@ -46,6 +46,11 @@ describe("banner wording seen on large sites", () => {
     }
   });
 
+  it("recognizes English rejects of all optional cookies, but not of one category", () => {
+    for (const l of ["Reject optional cookies", "Decline non-essential cookies", "Reject all additional cookies"]) expect(isRejectLabel(l), l).toBe(true);
+    for (const l of ["Reject marketing cookies", "Reject analytics cookies"]) expect(isRejectLabel(l), l).toBe(false);
+  });
+
   it("recognizes the refusal wording of Google Funding Choices, InMobi and Klaro", () => {
     for (const l of ["Nicht einwilligen", "Do not consent", "DISAGREE", "Ich lehne ab", "I decline", "Ich stimme nicht zu", "Alleen essentiële cookies"]) {
       expect(isRejectLabel(l), l).toBe(true);

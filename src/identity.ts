@@ -82,7 +82,8 @@ export async function applyIdentity(page: Page, identity?: VisitorIdentity): Pro
   await session
     .send("Emulation.setUserAgentOverride", {
       userAgent: identity.userAgent,
-      acceptLanguage: "de-DE,de;q=0.9",
+      // Chromium adds the q-values itself; "de-DE,de" goes out as "de-DE,de;q=0.9", like a normal browser.
+      acceptLanguage: "de-DE,de",
       userAgentMetadata: identity.metadata,
     })
     .catch(() => undefined);

@@ -67,6 +67,19 @@ export async function startFixtures(): Promise<Fixtures> {
       res.end(bot ? "<script>parent.postMessage('consentprobe-fixture-bot','*')</script>" : "<p>ok</p>");
       return;
     }
+    if (req.url?.startsWith("/embed-frame")) {
+      // A third-party embed (think video player) that loads a font file for itself.
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<p>player</p><img src="/font.woff2" alt="">`);
+      return;
+    }
+    if (req.url?.startsWith("/landing")) {
+      // The page a site redirects to on another domain; it loads a file from the domain the user typed.
+      const back = new URL(req.url, "http://x").searchParams.get("back") ?? "";
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(`<html lang="de"><body><h1>Landing</h1><img src="${back}/px.gif" alt=""></body></html>`);
+      return;
+    }
     if (req.url?.startsWith("/analytics.js")) {
       res.writeHead(200, { "content-type": "text/javascript" });
       res.end("/* fake analytics */");
@@ -181,6 +194,25 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/push-prompt":
         // A push-notification prompt in a fixed overlay: "Ablehnen" and "Erlauben" are no cookie decision.
         return html(200, page(`<h1>Shop</h1>${FOOTER}<div role="dialog" style="position:fixed;top:0;left:30%;width:40%;background:#fff;padding:1rem"><p>Möchten Sie Benachrichtigungen über neue Angebote erhalten?</p><button type="button">Ablehnen</button><button type="button">Erlauben</button></div>`));
+      case "/csp-blocked":
+        // The page's own Content Security Policy stops the tracker: nothing reaches the third party.
+        return html(200, page(`<h1>CSP</h1>${FOOTER}<img src="${thirdOrigin}/px.gif" alt="">`, `<script src="${thirdOrigin}/analytics.js"></script>`), {
+          "content-security-policy": "img-src 'self'; script-src 'self'",
+        });
+      case "/embed-font":
+        return html(200, page(`<h1>Embed</h1>${FOOTER}<iframe src="${thirdOrigin}/embed-frame" title="player"></iframe>`));
+      case "/page-font":
+        return html(200, page(`<h1>Font</h1>${FOOTER}<img src="${thirdOrigin}/font.woff2" alt="">`));
+      case "/legal-cookie":
+        return html(200, page(`<h1>Legal cookie</h1><footer><a href="/impressum-cookie">Impressum</a> <a href="/datenschutz">Datenschutz</a></footer>`));
+      case "/impressum-cookie":
+        // A legal page that sets a cookie of its own: consentprobe's link check must not count it.
+        return html(200, page(`<h1>Impressum</h1>`), { "set-cookie": "legal_check=1; Path=/; Max-Age=3600" });
+      case "/redirect-away":
+        return html(302, "", { location: `${thirdOrigin}/landing?back=${encodeURIComponent(`http://localhost:${firstPort}`)}` });
+      case "/probe-identity":
+        // Reports what the site sees: navigator.webdriver and the Accept-Language header, as image paths.
+        return html(200, page(`<h1>Identity</h1>${FOOTER}<img src="/al/${encodeURIComponent(String(req.headers["accept-language"] ?? ""))}.gif" alt="">`, `<script>new Image().src = "/wd-" + navigator.webdriver + ".gif";</script>`));
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));

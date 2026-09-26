@@ -16,6 +16,7 @@ import {
   type ImprintMode,
 } from "./findings.js";
 import { findLegalLinks, type RawAnchor } from "./legal.js";
+import { recordRequests, type RawRequest } from "./record.js";
 import { VERSION } from "./version.js";
 import type {
   ConsentBanner,
@@ -174,8 +175,8 @@ async function runBaseline(
     const page = await context.newPage();
     await applyIdentity(page, identity);
     page.setDefaultTimeout(Math.min(timeoutMs, 10000));
-    const rawRequests: { url: string; resourceType: string }[] = [];
-    page.on("request", (req) => rawRequests.push({ url: req.url(), resourceType: req.resourceType() }));
+    const rawRequests: RawRequest[] = [];
+    recordRequests(page, rawRequests);
 
     const response = await openPage(page, url, timeoutMs).catch((err: unknown) => {
       throw explainNavigationError(err, timeoutMs);
@@ -249,6 +250,8 @@ async function runBaseline(
     });
     const lang = await bounded(page.evaluate(() => document.documentElement.lang || ""), 5000, () => "");
     const legal = findLegalLinks(anchors);
+    // Read the cookies before the link check: its requests share the cookie jar and may set cookies of their own.
+    const cookiesBeforeLinkCheck = await context.cookies();
     for (const link of [legal.imprint, legal.privacy] as LegalLink[]) {
       // A page may point its legal links anywhere; never let it make consentprobe probe the local network.
       if (link.found && link.href && (!isLocalHost(new URL(link.href).hostname) || isLocalHost(pageHost))) {
@@ -259,7 +262,7 @@ async function runBaseline(
     const measured = {
       finalUrl,
       requests: classifyRequests(rawRequests, pageHost, firstParty),
-      cookies: classifyCookies(await context.cookies(), pageHost, firstParty),
+      cookies: classifyCookies(cookiesBeforeLinkCheck, pageHost, firstParty),
       legal,
       lang,
       consentWall,
@@ -286,6 +289,8 @@ function mergeBanner(a?: ConsentBanner, b?: ConsentBanner): ConsentBanner {
     rejectLike: a?.rejectLike ?? b?.rejectLike,
     overlayHint: a?.overlayHint || b?.overlayHint || undefined,
     incomplete: (a?.incomplete || b?.incomplete) && !(a?.detected || b?.detected) ? true : undefined,
+    rejectSearchIncomplete:
+      (a?.rejectSearchIncomplete || b?.rejectSearchIncomplete) && !(a?.rejectFound || b?.rejectFound) ? true : undefined,
   };
 }
 
@@ -303,7 +308,8 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
   const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
   const bannerWaitMs = options.bannerWaitMs ?? DEFAULTS.bannerWaitMs;
   const clickTest = options.clickTest ?? true;
-  const firstParty = options.firstParty ?? [];
+  // The domain the user typed belongs to the operator too, also when the site redirects to another one.
+  const firstParty = [...(options.firstParty ?? []), url.hostname];
   const imprintMode = options.imprint ?? "auto";
   const rules = [...(options.extraRules ?? []), ...BUILT_IN_RULES];
 

@@ -87,6 +87,42 @@ describe("scan (real browser)", () => {
     await expect(scan(`${fx.origin}/blocked`, opts())).rejects.toThrow(/HTTP 403/);
   });
 
+  it("does not report requests that the page's own Content Security Policy blocked", async () => {
+    const r = await scan(`${fx.origin}/csp-blocked`, opts());
+    expect(ids(r).filter((id) => id.startsWith("third-party-before-consent"))).toEqual([]);
+    expect(r.requests.some((q) => q.host === fx.thirdPartyHost)).toBe(false);
+  });
+
+  it("does not blame the site for fonts that an embedded third-party frame loads for itself", async () => {
+    const fonts = { ...opts(), extraRules: [{ id: "test-fonts", name: "Test Fonts", category: "fonts" as const, hosts: [fx.thirdPartyHost], pathPrefix: "/font.woff2" }] };
+    const embedded = await scan(`${fx.origin}/embed-font`, fonts);
+    expect(ids(embedded)).not.toContain("third-party-before-consent:test-fonts");
+    expect(embedded.requests.some((q) => q.url.endsWith("/font.woff2") && q.embeddedIn === fx.thirdPartyHost)).toBe(true);
+    const own = await scan(`${fx.origin}/page-font`, fonts);
+    expect(ids(own)).toContain("third-party-before-consent:test-fonts");
+  });
+
+  it("does not count cookies that its own legal-link check received", async () => {
+    const r = await scan(`${fx.origin}/legal-cookie`, opts());
+    expect(r.legal.imprint.status).toBe(200);
+    expect(r.cookies.map((c) => c.name)).not.toContain("legal_check");
+  });
+
+  it("counts the domain the user typed as first party after a redirect to another domain", async () => {
+    const r = await scan(`${fx.origin}/redirect-away`, opts());
+    expect(new URL(r.finalUrl).hostname).toBe(fx.thirdPartyHost);
+    const typed = r.requests.filter((q) => q.host === "localhost" && q.url.endsWith("/px.gif"));
+    expect(typed.length).toBeGreaterThan(0);
+    expect(typed.every((q) => !q.thirdParty)).toBe(true);
+  });
+
+  it("does not hide automation and sends a well-formed Accept-Language header", async () => {
+    const r = await scan(`${fx.origin}/probe-identity`, opts());
+    const paths = r.requests.map((q) => new URL(q.url).pathname);
+    expect(paths).toContain("/wd-true.gif");
+    expect(paths).toContain(`/al/${encodeURIComponent("de-DE,de;q=0.9")}.gif`);
+  });
+
   it("refuses to measure a bot check that answers HTTP 200", async () => {
     await expect(scan(`${fx.origin}/bot-challenge`, opts())).rejects.toThrow(/bot check/);
   });
