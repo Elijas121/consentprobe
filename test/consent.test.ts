@@ -261,6 +261,21 @@ describe("consent click test (real browser)", () => {
     expect(r.consent?.banner.incomplete).toBeUndefined();
   });
 
+  it("never clicks buttons of an app shell, a video lightbox or a newsletter prompt", async () => {
+    for (const path of ["/fixed-shell-form", "/video-lightbox", "/newsletter-prompt"]) {
+      const r = await scan(`${fx.origin}${path}`, { ...opts(), bannerWaitMs: 800 });
+      expect(r.consent?.banner, path).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+      expect(r.consent?.reject?.clicked, path).toBe(false);
+      expect(r.consent?.accept?.clicked, path).toBe(false);
+    }
+  }, 30000);
+
+  it("finds the controls of a banner with a long text", async () => {
+    const r = await scan(`${fx.origin}/banner-long-text`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+  });
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });

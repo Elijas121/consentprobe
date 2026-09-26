@@ -146,6 +146,9 @@ describe("scan (real browser)", () => {
 
   it("refuses to measure a bot check that answers HTTP 200", async () => {
     await expect(scan(`${fx.origin}/bot-challenge`, opts())).rejects.toThrow(/bot check/);
+    // A hidden device check on a small ordinary page is no bot check.
+    const contact = await scan(`${fx.origin}/contact-hidden-captcha`, opts());
+    expect(contact.finalUrl).toBe(`${fx.origin}/contact-hidden-captcha`);
   });
 
   it("still measures a page whose load event never fires", async () => {

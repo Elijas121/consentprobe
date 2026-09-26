@@ -115,16 +115,27 @@ const MAX_LABEL = 50;
 const isOverlayElement = (el: Element): boolean => {
   // Walk out of shadow roots too: some banners live in a web component.
   const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
   for (let n: Element | null = el; n; n = up(n)) {
+    // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+    if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
     const position = getComputedStyle(n).position;
-    // A fixed wrapper around the whole page (smooth-scroll libraries) is no overlay: it holds <main> or many links.
-    if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
+    if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
     const role = n.getAttribute("role");
     if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
       return true;
     }
     // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
-    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
+    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
       if (((n as HTMLElement).innerText || "").length < 4000) return true;
     }
   }
@@ -171,11 +182,21 @@ const hasConsentContext = (el: Element): boolean => {
     for (let o = up(x); o && o.tagName !== "BODY"; o = up(o)) if (isOverlayBox(o)) return true;
     return false;
   };
+  // Button labels ("Zustimmen", "Ablehnen") do not make their own context: only the prose around them
+  // counts, and a label only when it names cookies or consent itself ("Cookies akzeptieren").
+  const labelWords = /cookie|consent|einwillig|tracking|datenschutz|privacy|privatsph/i;
   let n: Element | null = up(el);
   for (let depth = 0; n && n.tagName !== "BODY" && depth < 16; depth += 1, n = up(n)) {
     const text = deepText(n);
-    if (text.length > 6000) return false;
-    if (words.test(text)) return true;
+    const box = isOverlayBox(n);
+    // A page-sized container is the page, not the prompt. An overlay may hold a long text (vendor lists).
+    if (text.length > (box ? 30000 : 6000)) return false;
+    const labels = Array.from(n.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']"))
+      .map((b) => ((b as HTMLElement).innerText || (b as HTMLInputElement).value || "").trim())
+      .filter(Boolean);
+    let prose = text;
+    for (const label of labels) prose = prose.replace(label, " ");
+    if (words.test(prose) || labels.some((label) => labelWords.test(label))) return true;
     // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
     // A sticky button row or a fixed toolbar inside the prompt is not the whole prompt: keep walking to it.
     if (isOverlayBox(n) && !outerOverlay(n)) return false;
@@ -268,14 +289,26 @@ const PLAIN_MARK = "data-consentprobe-control";
  */
 function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
   const candidate = new RegExp(args.source, args.flags);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
   const inOverlay = (el: Element): boolean => {
     for (let n: Element | null = el; n; n = n.parentElement) {
+      // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+      if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
       const position = getComputedStyle(n).position;
-      if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
+      if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
       // Same rule as isOverlayElement: a container the site names as its cookie or consent UI.
-      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
         if (((n as HTMLElement).innerText || "").length < 4000) return true;
       }
     }
@@ -313,13 +346,25 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
  */
 function overlayIndices(els: Element[], max: number): number[] {
   const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
   const inOverlay = (el: Element): boolean => {
     for (let n: Element | null = el; n; n = up(n)) {
+      // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+      if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
       const position = getComputedStyle(n).position;
-      if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
+      if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
-      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`) && !/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
         if (((n as HTMLElement).innerText || "").length < 4000) return true;
       }
     }

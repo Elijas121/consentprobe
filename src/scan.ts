@@ -223,9 +223,15 @@ async function runBaseline(
     const probe = await bounded(
       page.evaluate(() => ({
         title: document.title,
-        markers: document.querySelectorAll(
-          "form#challenge-form[action*='__cf_chl'], #challenge-running, #cf-challenge-running, .cf-browser-verification, script[src*='/cdn-cgi/challenge-platform/'], #px-captcha, iframe[src*='captcha-delivery.com']",
-        ).length,
+        // Only visible markers: bot protection also puts hidden device checks on ordinary pages.
+        markers: Array.from(
+          document.querySelectorAll(
+            "form#challenge-form[action*='__cf_chl'], #challenge-running, #cf-challenge-running, .cf-browser-verification, #px-captcha, iframe[src*='captcha-delivery.com']",
+          ),
+        ).filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
+        }).length,
         textLength: (document.body?.innerText || "").length,
         links: document.querySelectorAll("a[href]").length,
       })),
