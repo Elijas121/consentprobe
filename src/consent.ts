@@ -192,6 +192,8 @@ const hasConsentContext = (el: Element): boolean => {
   // Button labels ("Zustimmen", "Ablehnen") do not make their own context: only the prose around them
   // counts, and a label only when it names cookies or consent itself ("Cookies akzeptieren").
   const labelWords = /cookie|consent|einwillig|tracking|datenschutz|privacy|privatsph/i;
+  const gate = /\b(1[68]|21)\s*(jahre|years|\+)|mindestens\s+1[68]|volljährig|alter(s)?(prüfung|verifi|bestätigung)|age\s+verification|legal\s+(drinking\s+)?age|years\s+of\s+age|jugendschutz|\bagb\b|nutzungsbedingungen|geschäftsbedingungen|terms\s+(of\s+(use|service)|and\s+conditions)/i;
+  const strong = /cookie|consent|einwillig|tracking|personalis|privatsph/i;
   let n: Element | null = up(el);
   for (let depth = 0; n && n.tagName !== "BODY" && depth < 16; depth += 1, n = up(n)) {
     const text = deepText(n);
@@ -203,7 +205,12 @@ const hasConsentContext = (el: Element): boolean => {
       .filter(Boolean);
     let prose = text;
     for (const label of labels) prose = prose.replace(label, " ");
-    if (words.test(prose) || labels.some((label) => labelWords.test(label))) return true;
+    const labelContext = labels.some((label) => labelWords.test(label));
+    if (words.test(prose) || labelContext) {
+      // An age or terms gate names the privacy policy too, but it asks for no consent to cookies or tracking.
+      if (gate.test(prose) && !strong.test(prose) && !labelContext) return false;
+      return true;
+    }
     // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
     // A sticky button row or a fixed toolbar inside the prompt is not the whole prompt: keep walking to it.
     if (isOverlayBox(n) && !outerOverlay(n)) return false;

@@ -295,6 +295,17 @@ describe("consent click test (real browser)", () => {
     expect(other.consent?.accept?.clicked).toBe(false);
   }, 30000);
 
+  it("never takes an age or terms gate for a cookie banner, but keeps a banner that names the terms", async () => {
+    for (const path of ["/age-gate", "/terms-gate"]) {
+      const r = await scan(`${fx.origin}${path}`, { ...opts(), bannerWaitMs: 800 });
+      expect(r.consent?.banner, path).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+      expect(r.consent?.reject?.clicked, path).toBe(false);
+    }
+    const banner = await scan(`${fx.origin}/banner-with-terms`, opts());
+    expect(banner.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(banner.consent?.reject?.clicked).toBe(true);
+  }, 30000);
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
