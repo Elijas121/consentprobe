@@ -300,12 +300,16 @@ describe("consent click test (real browser)", () => {
   });
 
   it("repeats a visit that missed a late banner, so both clicks are tested", async () => {
+    fx.resetLateTickets();
     const r = await scan(`${fx.origin}/banner-sometimes-late`, { ...opts(), bannerWaitMs: 1000 });
     expect(r.consent?.reject?.clicked).toBe(true);
     expect(r.consent?.accept?.clicked).toBe(true);
     expect(find(r, "consent-reject-not-tested")).toBeUndefined();
     expect(find(r, "consent-accept-not-tested")).toBeUndefined();
-  });
+    // One ticket per marked visit: the two click visits, plus the repeat of the one that missed the
+    // late banner. The baseline visit carries no marking binding and never asks (see the fixture).
+    expect(fx.lateTicketCount()).toBe(3);
+  }, 60000);
 
   it("skips the click visits when clickTest is off", async () => {
     const r = await scan(`${fx.origin}/banner-good`, { ...opts(), clickTest: false });

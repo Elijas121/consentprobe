@@ -52,6 +52,10 @@ export interface Fixtures {
   thirdPartyHost: string;
   /** True once the third-party server received an Authorization header. */
   thirdPartySawCredentials: () => boolean;
+  /** How many visits asked the late-banner fixture for a ticket since the last reset. */
+  lateTicketCount: () => number;
+  /** Forget the late-banner tickets of earlier tests, so each test starts from a fresh counter. */
+  resetLateTickets: () => void;
   close: () => Promise<void>;
 }
 
@@ -101,7 +105,7 @@ export async function startFixtures(): Promise<Fixtures> {
   const thirdPort = await listen(third, "127.0.0.1");
   const thirdOrigin = `http://127.0.0.1:${thirdPort}`;
 
-  let lateVisits = 0;
+  let lateTickets = 0;
   const first = createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
     const html = (status: number, body: string, headers: Record<string, string | string[]> = {}) => {
@@ -301,13 +305,27 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/consent-management/":
         return html(200, page(`<h1>Wir finanzieren uns über Werbung</h1><p>Abo ohne Werbung oder mit Werbung und Tracking weiter.</p><a href="/abo">Zum Abo</a> <button type="button">Akzeptieren und weiter</button>`));
       case "/banner-sometimes-late": {
-        // Every second visit shows the banner only after 1.5 s: parallel visits can disagree.
-        lateVisits += 1;
-        const delay = lateVisits % 2 === 0 ? 1500 : 0;
+        // The banner of one marked visit stays hidden long enough for the shorter banner wait to miss
+        // it, so that visit is repeated and the repeat gets ticket 2 and the banner at once. Only
+        // marked visits ask for a ticket: the baseline shows the banner at once, so which visit is
+        // delayed never depends on the parallel request order (the binding name is runConsentSession's).
         return html(200, bannerPage("good", thirdOrigin)
           .replace('id="banner" style="', 'id="banner" style="display:none;')
-          .replace("</main>", `<script>setTimeout(function(){document.getElementById('banner').style.display='block';},${delay});</script></main>`));
+          .replace(
+            "</main>",
+            `<script>var b=document.getElementById('banner');
+              function showBanner(ms){setTimeout(function(){b.style.display='block';},ms);}
+              if(typeof window.__consentprobeMark==='function'){fetch('/late-ticket').then(function(r){return r.text();}).then(function(a){showBanner(a==='delay'?3000:0);});}
+              else{showBanner(0);}
+            </script></main>`,
+          ));
       }
+      case "/late-ticket":
+        // One ticket per scan: the first marked visit (the click visits) gets a late banner, the repeat
+        // of the visit that missed it and every later visit get it at once.
+        lateTickets += 1;
+        res.writeHead(200, { "content-type": "text/plain" });
+        return res.end(lateTickets === 1 ? "delay" : "later");
       case "/legal-scripted":
         // Page-builder footer: clickable headings whose URL is set by a script, no href anywhere.
         return html(200, page(`<h1>Scripted legal</h1><footer><div class="blurb" style="cursor:pointer" onclick="location.href='/impressum'"><h6 tabindex="-1">Impressum</h6></div><div class="blurb" style="cursor:pointer" onclick="location.href='/datenschutz'"><h6 tabindex="-1">Datenschutz</h6></div></footer>`));
@@ -333,6 +351,10 @@ export async function startFixtures(): Promise<Fixtures> {
     origin: `http://localhost:${firstPort}`,
     thirdPartyHost: "127.0.0.1",
     thirdPartySawCredentials: () => thirdPartyAuthorization,
+    lateTicketCount: () => lateTickets,
+    resetLateTickets: () => {
+      lateTickets = 0;
+    },
     close: () =>
       new Promise((resolve) => {
         first.close(() => third.close(() => resolve()));
