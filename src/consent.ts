@@ -112,9 +112,12 @@ const MAX_LABEL = 50;
  * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked.
  */
 const isOverlayElement = (el: Element): boolean => {
-  for (let n: Element | null = el; n; n = n.parentElement) {
+  // Walk out of shadow roots too: some banners live in a web component.
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  for (let n: Element | null = el; n; n = up(n)) {
     const position = getComputedStyle(n).position;
-    if (position === "fixed" || position === "sticky") return true;
+    // A fixed wrapper around the whole page (smooth-scroll libraries) is no overlay: it holds <main> or many links.
+    if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
     const role = n.getAttribute("role");
     if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
       return true;
@@ -146,8 +149,9 @@ const isChoicePart = (el: Element): boolean =>
  */
 const hasConsentContext = (el: Element): boolean => {
   const words = /cookie|consent|einwillig|zustimm|datenschutz|privacy|privatsph|tracking|partner|personalis|confidentialit|donn[ée]es personnelles|riservatezza|privacidad|toestemming|prywatno/i;
-  let n: Element | null = el.parentElement;
-  for (let depth = 0; n && n.tagName !== "BODY" && depth < 12; depth += 1, n = n.parentElement) {
+  const up = (x: Element): Element | null => x.parentElement ?? ((x.getRootNode() as { host?: Element }).host ?? null);
+  let n: Element | null = up(el);
+  for (let depth = 0; n && n.tagName !== "BODY" && depth < 12; depth += 1, n = up(n)) {
     const text = (n as HTMLElement).innerText || "";
     if (text.length > 6000) return false;
     if (words.test(text)) return true;
@@ -172,6 +176,7 @@ async function inOverlay(locator: Locator, frame: Frame, page: Page, q: QueryBud
 interface Found {
   locator: Locator;
   control: ConsentControl;
+  frame: Frame;
 }
 
 interface Controls {
@@ -185,14 +190,16 @@ interface Controls {
 async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<string> {
   const text = await ask(() => el.innerText({ timeout: 1000 }), q, "", frame);
   const aria = text ? "" : ((await ask(() => el.getAttribute("aria-label", { timeout: 1000 }), q, null, frame)) ?? "");
-  return (text || aria).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
+  // <input type="button" value="Alle ablehnen"> has no text; its value is the label.
+  const value = text || aria ? "" : ((await ask(() => el.getAttribute("value", { timeout: 1000 }), q, null, frame)) ?? "");
+  return (text || aria || value).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
 }
 
 async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
   for (const frame of page.frames()) {
     const locator = frame.locator(selector).first();
     if (await ask(() => locator.isVisible(), q, false, frame)) {
-      return { locator, control: { label: (await labelOf(locator, q, frame)) || selector, method: "cmp-selector" } };
+      return { locator, frame, control: { label: (await labelOf(locator, q, frame)) || selector, method: "cmp-selector" } };
     }
   }
   return undefined;
@@ -211,7 +218,7 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
   const inOverlay = (el: Element): boolean => {
     for (let n: Element | null = el; n; n = n.parentElement) {
       const position = getComputedStyle(n).position;
-      if (position === "fixed" || position === "sticky") return true;
+      if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
       // Same rule as isOverlayElement: a container the site names as its cookie or consent UI.
@@ -246,14 +253,52 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
   return marked;
 }
 
+/**
+ * Indices (at most `max`) of the elements that sit in an overlay, in one call. Same rule as
+ * isOverlayElement (page functions cannot share code). Without this pre-filter, a page with many
+ * matching links ("Erlaubnis", "Zustimmung" in headlines) pushed the banner's controls past the cap.
+ */
+function overlayIndices(els: Element[], max: number): number[] {
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  const inOverlay = (el: Element): boolean => {
+    for (let n: Element | null = el; n; n = up(n)) {
+      const position = getComputedStyle(n).position;
+      if ((position === "fixed" || position === "sticky") && !n.querySelector("main") && n.querySelectorAll("a[href]").length <= 100) return true;
+      const role = n.getAttribute("role");
+      if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+        if (((n as HTMLElement).innerText || "").length < 4000) return true;
+      }
+    }
+    return false;
+  };
+  const out: number[] = [];
+  for (let i = 0; i < els.length && out.length < max; i += 1) {
+    const el = els[i];
+    if (el && inOverlay(el)) out.push(i);
+  }
+  return out;
+}
+
 async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
   const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
   const candidates = CANDIDATE_LABEL;
   for (const frame of page.frames()) {
+    // A cross-origin banner frame is itself the overlay; everything inside it qualifies.
+    const frameIsOverlay =
+      frame !== page.mainFrame() &&
+      (await ask(async () => {
+        const el = await frame.frameElement();
+        return el.evaluate(isOverlayElement);
+      }, q, false, page.mainFrame()));
     for (const role of ["button", "link"] as const) {
       const all = frame.getByRole(role, { name: candidates });
-      const count = Math.min(await ask(() => all.count(), q, 0, frame), 15);
-      for (let i = 0; i < count; i++) {
+      const total = await ask(() => all.count(), q, 0, frame);
+      const indices =
+        frameIsOverlay
+          ? [...Array(Math.min(total, 15)).keys()]
+          : await ask(() => all.evaluateAll(overlayIndices, 15), q, [] as number[], frame);
+      for (const i of indices) {
         const locator = all.nth(i);
         if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
         const label = await labelOf(locator, q, frame);
@@ -261,7 +306,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
         if (!(await inOverlay(locator, frame, page, q))) continue;
         if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
         if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
-        const found: Found = { locator, control: { label, method: "text" } };
+        const found: Found = { locator, frame, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
         else if (isRejectLike(label)) out.rejectLike ??= label;
@@ -278,7 +323,7 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       const label = await labelOf(locator, q, frame);
       if (!label || label.length > MAX_LABEL) continue;
       if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
-      const found: Found = { locator, control: { label, method: "text" } };
+      const found: Found = { locator, frame, control: { label, method: "text" } };
       if (isRejectLabel(label)) out.reject ??= found;
       else if (isAcceptLabel(label)) out.accept ??= found;
       else if (isRejectLike(label)) out.rejectLike ??= label;
@@ -333,7 +378,17 @@ async function cookieOverlayVisible(page: Page, q: QueryBudget): Promise<boolean
   for (const frame of page.frames()) {
     const hit = await ask(
       () => frame.evaluate(() => {
-        for (const el of Array.from(document.querySelectorAll("body *"))) {
+        // Include the content of open shadow roots: some banners are web components.
+        const all: Element[] = [];
+        const walk = (root: Document | ShadowRoot) => {
+          for (const e of Array.from(root.querySelectorAll("*"))) {
+            all.push(e);
+            if (e.shadowRoot) walk(e.shadowRoot);
+          }
+        };
+        walk(document);
+        for (const el of all) {
+          if (el.tagName === "HTML" || el.tagName === "BODY" || el.tagName === "HEAD") continue;
           const style = getComputedStyle(el);
           const named = /cookie|consent|gdpr/i.test(`${el.tagName} ${el.id} ${el.getAttribute("class") ?? ""}`);
           if (style.position !== "fixed" && style.position !== "sticky" && !named) continue;
@@ -422,6 +477,16 @@ export async function runConsentSession(
 
     const pageHost = new URL(page.url()).hostname;
     session.control = target.control;
+    // The control is found by position; if the page re-rendered since, that position may hold another
+    // element now. Only click when the label is still the one that was judged.
+    if (target.control.method === "text") {
+      const now = await labelOf(target.locator, q, target.frame);
+      if (normalizeLabel(now) !== normalizeLabel(target.control.label)) {
+        session.error = `click skipped: the control changed before the click (now "${now.slice(0, 40)}")`;
+        await shot(page, o.screenshotDir, `${action}-0-control-changed.png`);
+        return { banner, session };
+      }
+    }
     await shot(page, o.screenshotDir, `${action}-1-before-click.png`);
     // Snapshot and fallback marker directly before the click, after the (slow) screenshot.
     session.cookiesBefore = classifyCookies(await context.cookies(), pageHost, o.firstParty);

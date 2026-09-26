@@ -212,6 +212,28 @@ describe("consent click test (real browser)", () => {
     expect(r.consent?.accept?.clicked).toBe(true);
   });
 
+  it("reads controls built from <input> elements, and banners inside a shadow root", async () => {
+    for (const path of ["/banner-input-buttons", "/banner-shadow"]) {
+      const r = await scan(`${fx.origin}${path}`, opts());
+      expect(r.consent?.banner, path).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+      expect(r.consent?.reject?.control?.label, path).toBe("Alle ablehnen");
+      expect(r.consent?.reject?.clicked, path).toBe(true);
+      expect(r.consent?.accept?.clicked, path).toBe(true);
+    }
+  });
+
+  it("finds the banner's link controls behind many matching links in the page", async () => {
+    const r = await scan(`${fx.origin}/banner-many-links`, opts());
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+  });
+
+  it("never clicks a banner mock-up inside a fixed page wrapper", async () => {
+    const r = await scan(`${fx.origin}/scroll-wrapper-mockup`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.accept?.clicked).toBe(false);
+  });
+
   it("never takes a push-notification prompt for a cookie banner", async () => {
     const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });

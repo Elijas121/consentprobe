@@ -213,6 +213,20 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/probe-identity":
         // Reports what the site sees: navigator.webdriver and the Accept-Language header, as image paths.
         return html(200, page(`<h1>Identity</h1>${FOOTER}<img src="/al/${encodeURIComponent(String(req.headers["accept-language"] ?? ""))}.gif" alt="">`, `<script>new Image().src = "/wd-" + navigator.webdriver + ".gif";</script>`));
+      case "/banner-input-buttons":
+        // Controls built from <input type="button|submit">: their label is the value attribute.
+        return html(200, page(`<h1>Inputs</h1>${FOOTER}<form id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><input type="button" value="Alle ablehnen"> <input type="submit" value="Alle akzeptieren"></form><script>document.querySelectorAll('#banner input, #banner a, #banner button').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();document.getElementById('banner').remove();});});</script>`));
+      case "/banner-shadow":
+        // The banner's content lives in the open shadow root of a web component inside a fixed host.
+        return html(200, page(`<h1>Shadow</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff"><cookie-box></cookie-box></div><script>customElements.define('cookie-box', class extends HTMLElement { connectedCallback() { const r = this.attachShadow({ mode: 'open' }); r.innerHTML = '<div><p>Wir verwenden Cookies.</p><button id="rej">Alle ablehnen</button><button id="acc">Alle akzeptieren</button></div>'; r.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => document.getElementById('banner').remove())); } });</script>`));
+      case "/banner-many-links": {
+        // A news page: many links whose text passes the cheap pre-filter come before the banner in the DOM.
+        const teasers = Array.from({ length: 25 }, (_, i) => `<li><a href="/artikel-${i}">Zustimmung zur Reform ${i}</a></li>`).join("");
+        return html(200, page(`<h1>News</h1><ul>${teasers}</ul>${FOOTER}<div id="banner" role="dialog" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><a href="#" id="rej">Alle ablehnen</a> <a href="#" id="acc">Alle akzeptieren</a></div><script>document.querySelectorAll('#banner input, #banner a, #banner button').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();document.getElementById('banner').remove();});});</script>`));
+      }
+      case "/scroll-wrapper-mockup":
+        // A smooth-scroll site: the whole page sits in a fixed wrapper. The banner mock-up in the content is no overlay.
+        return html(200, `<!doctype html><html lang="de"><head><title>Agency</title></head><body><div id="smooth-wrapper" style="position:fixed;inset:0;overflow:auto"><main><h1>Wir bauen Cookie-Banner</h1><div class="demo"><p>Wir verwenden Cookies.</p><button type="button">Alle akzeptieren</button><button type="button">Nur notwendige Cookies</button></div></main>${FOOTER}</div></body></html>`);
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));
