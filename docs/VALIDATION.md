@@ -117,7 +117,7 @@ Against the checked ground truth for each site:
 | Blind first run (before any fix from this sample) | 47/47 | 36/39 | 36/39 |
 | After the fixes, same sites (no longer blind) | 46/46 | 38/38 | 37/38 |
 
-Not counted: one site where the tool reported "search incomplete" and made no claim, and one site with a consent wall on a separate page, where the tool reports the wall but by design does not click (R and A). In the rescan after the fixes, one large site refused the browser with HTTP 403 after the many visits of that day; with the same code it had been measured correctly in three earlier runs.
+Not counted: one site where the tool reported "search incomplete" and made no claim, and one site with a consent wall on a separate page, where the tool at the time reported the wall but by design did not click (R and A). Since then the choice on such a wall is clicked like a banner; the numbers here were measured before that change. In the rescan after the fixes, one large site refused the browser with HTTP 403 after the many visits of that day; with the same code it had been measured correctly in three earlier runs.
 
 **Errors of the blind run:**
 
