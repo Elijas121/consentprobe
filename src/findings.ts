@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isThirdParty, matchRule } from "./classify.js";
+import { isThirdParty, matchRule, sharedOperator } from "./classify.js";
 import {
   BUILT_IN_RULES,
   CATEGORY_HINT,
@@ -33,7 +33,13 @@ export function findingsForRequests(
   const byRule = new Map<string, { rule: TrackerRule; urls: string[]; reqs: RequestRecord[] }>();
   const unclassified = new Map<string, number>();
 
+  const ownServices = new Map<string, Set<string>>();
+
   for (const req of requests) {
+    if (req.sameOperator) {
+      const rule = matchRule(new URL(req.url), rules);
+      if (rule) ownServices.set(req.sameOperator, (ownServices.get(req.sameOperator) ?? new Set()).add(rule.name));
+    }
     if (!req.thirdParty) continue;
     const rule = matchRule(new URL(req.url), rules);
     if (rule) {
@@ -82,6 +88,14 @@ export function findingsForRequests(
         .sort((a, b) => b[1] - a[1])
         .slice(0, MAX_EVIDENCE * 2)
         .map(([host, n]) => `${host} (${n})`),
+    });
+  }
+  for (const [operator, names] of ownServices) {
+    findings.push({
+      id: "same-operator-services",
+      severity: "info",
+      message: `Services that belong to the site's own operator (${operator}) were contacted: ${[...names].join(", ")}. They are not counted as third parties, but measurement or advertising can still need consent.`,
+      evidence: [...names],
     });
   }
   return findings;
@@ -170,6 +184,12 @@ export function findingsForLegal(
   legal: { imprint: LegalLink; privacy: LegalLink },
   imprintMode: ImprintMode = "check",
   germanRules = true,
+  /**
+   * The domain (.de, .at, .ch, .li) or the user (--imprint always) says the operator is in a country
+   * with an imprint duty. A German-language page alone does not: consentprobe asks for German
+   * content, and many international sites serve it, so their missing imprint is only a warning.
+   */
+  imprintDutyLikely = true,
 ): Finding[] {
   const findings: Finding[] = [];
   const checks = [
@@ -188,7 +208,11 @@ export function findingsForLegal(
 
   for (const { key, label, link } of checks) {
     if (key === "imprint" && !checkImprint) continue;
-    const hard: Severity = key === "privacy" && !germanRules ? "warn" : "error";
+    const hard: Severity = key === "privacy" ? (germanRules ? "error" : "warn") : imprintDutyLikely ? "error" : "warn";
+    const dutyNote =
+      key === "imprint" && !imprintDutyLikely
+        ? " The page is in German, but its domain does not show where the operator is established; an imprint is required for operators in Germany, Austria or Switzerland."
+        : "";
     if (!link.found && link.candidate) {
       findings.push({
         id: `${key}-link-uncertain`,
@@ -204,7 +228,7 @@ export function findingsForLegal(
       findings.push({
         id: `${key}-link-missing`,
         severity: hard,
-        message: `No link to the ${label} found on this page.`,
+        message: `No link to the ${label} found on this page.${dutyNote}`,
         evidence: [],
       });
       continue;
@@ -253,11 +277,13 @@ export function classifyRequests(
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") continue;
     const gcs = u.searchParams.get("gcs");
+    const operator = sharedOperator(u.hostname, pageHost);
     out.push({
       url: `${u.origin}${u.pathname}`,
       host: u.hostname,
       resourceType: r.resourceType,
       thirdParty: isThirdParty(u.hostname, pageHost, firstParty),
+      ...(operator ? { sameOperator: operator } : {}),
       ...(gcs && /^G1[01]{2}$/.test(gcs) ? { consentSignal: gcs } : {}),
     });
   }

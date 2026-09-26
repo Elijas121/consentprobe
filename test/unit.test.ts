@@ -4,7 +4,7 @@ import { classifyRequests, describeConsentSignal, findingsForCookies, findingsFo
 import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel, isRejectLike } from "../src/consent.js";
 import { findLegalLinks } from "../src/legal.js";
 import { formatMarkdown, formatText } from "../src/report.js";
-import { checkLink, explainLaunchError } from "../src/scan.js";
+import { checkLink, explainLaunchError, looksLikeChallenge } from "../src/scan.js";
 import { explainNavigationError } from "../src/navigate.js";
 import { ask, bounded, newBudget } from "../src/bounded.js";
 import type { ScanResult } from "../src/types.js";
@@ -25,6 +25,21 @@ describe("classify", () => {
   it("treats subdomains of the page domain as first party", () => {
     expect(isThirdParty("cdn.example.de", "www.example.de")).toBe(false);
     expect(isThirdParty("example.com", "example.de")).toBe(true);
+  });
+  it("does not count another domain of the same company as a third party, but keeps customer hosting apart", () => {
+    expect(isThirdParty("fonts.gstatic.com", "www.youtube.com")).toBe(false);
+    expect(isThirdParty("fonts.googleapis.com", "www.google.de")).toBe(false);
+    expect(isThirdParty("open.scdn.co", "open.spotify.com")).toBe(false);
+    expect(isThirdParty("upload.wikimedia.org", "en.wikipedia.org")).toBe(false);
+    expect(isThirdParty("fonts.gstatic.com", "www.bakery.example")).toBe(true);
+    expect(isThirdParty("www.google-analytics.com", "someone.blogspot.com")).toBe(true);
+    expect(isThirdParty("d1.cloudfront.net", "www.amazon.de")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "evil-google.com")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "google.xyz")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "www.google.co.uk")).toBe(false);
+    const own = findingsForRequests(classifyRequests([{ url: "https://fonts.gstatic.com/s/x.woff2", resourceType: "font" }], "www.youtube.com"));
+    expect(own.find((f) => f.id.startsWith("third-party-before-consent"))).toBeUndefined();
+    expect(own.find((f) => f.id === "same-operator-services")?.message).toContain("Google");
   });
   it("matches rules on host suffix and path boundary, not substrings", () => {
     expect(matchRule(new URL("https://www.google-analytics.com/g/collect"))?.id).toBe("google-analytics");
@@ -196,6 +211,19 @@ describe("legal link detection", () => {
   it("finds a footer link by its path even with an unusual label", () => {
     const r = findLegalLinks([{ href: "https://e.de/rechtliches/impressum.html", text: "Rechtliches", inFooter: true }]);
     expect(r.imprint.found).toBe(true);
+  });
+});
+
+describe("bot-challenge pages", () => {
+  const page = { url: "https://example.com/", title: "Example", markers: 0, textLength: 500, links: 5 };
+  it("recognizes challenge pages by URL, title or marker, only when the page is small", () => {
+    expect(looksLikeChallenge({ ...page, url: "https://www.example.com/?solution=1&js_challenge=1" })).toBe(true);
+    expect(looksLikeChallenge({ ...page, title: "Just a moment..." })).toBe(true);
+    expect(looksLikeChallenge({ ...page, title: "Nur einen Moment…" })).toBe(true);
+    expect(looksLikeChallenge({ ...page, markers: 1 })).toBe(true);
+    expect(looksLikeChallenge(page)).toBe(false);
+    expect(looksLikeChallenge({ ...page, title: "Just a moment: our story", textLength: 20000, links: 80 })).toBe(false);
+    expect(looksLikeChallenge({ ...page, title: "Access denied – what the court said", textLength: 5000 })).toBe(false);
   });
 });
 

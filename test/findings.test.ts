@@ -73,6 +73,14 @@ describe("privacy link outside German rules", () => {
     expect(findingsForLegal(broken, "off", false).find((x) => x.id === "privacy-link-unreachable")?.severity).toBe("warn");
     expect(findingsForLegal(broken, "off", true).find((x) => x.id === "privacy-link-unreachable")?.severity).toBe("error");
   });
+
+  it("warns instead of erring about a missing imprint when only the language, not the domain, points to Germany", () => {
+    const missing = { imprint: { found: false }, privacy: { found: true, href: "https://example.com/privacy", status: 200 } };
+    const international = findingsForLegal(missing, "check", true, false).find((x) => x.id === "imprint-link-missing");
+    expect(international?.severity).toBe("warn");
+    expect(international?.message).toContain("operator is established");
+    expect(findingsForLegal(missing, "check", true, true).find((x) => x.id === "imprint-link-missing")?.severity).toBe("error");
+  });
 });
 
 describe("report details", () => {

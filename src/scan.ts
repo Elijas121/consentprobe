@@ -34,6 +34,28 @@ export class PageUnresponsiveError extends Error {
   }
 }
 
+/**
+ * The site answered with a bot check (HTTP 200, but a "just a moment" or verification page) instead
+ * of its content. Measuring that page would describe the bot check, not the site.
+ */
+export class PageChallengedError extends Error {
+  constructor() {
+    super("The site answered with a bot check instead of its content (a challenge page). No reliable measurement is possible.");
+    this.name = "PageChallengedError";
+  }
+}
+
+/**
+ * True for a page that is only a bot check: a challenge marker in the URL, the title or the DOM,
+ * on a page with little content. A login form with an embedded captcha on a normal page is not one.
+ */
+export function looksLikeChallenge(p: { url: string; title: string; markers: number; textLength: number; links: number }): boolean {
+  const small = p.textLength < 3000 && p.links < 30;
+  const url = /[?&](js_challenge|__cf_chl_[a-z_]*|cf_chl_[a-z_]*)=/i.test(p.url);
+  const title = /^(just a moment|nur einen moment|einen moment bitte|attention required|access denied|pardon our interruption|please verify|verify you are (a )?human|are you a robot|checking your browser|one more step|security check|ddos-guard)/i.test(p.title.trim());
+  return small && (url || title || p.markers > 0);
+}
+
 function describeStatus(status: number): string {
   if (status === 404 || status === 410) return `The page was not found (HTTP ${status}). Check the URL.`;
   if (status === 401 || status === 403 || status === 429) {
@@ -132,6 +154,20 @@ async function runBaseline(
       await mkdir(screenshotDir, { recursive: true });
       await page.screenshot({ path: join(screenshotDir, "baseline.png"), timeout: 10000 }).catch(() => undefined);
     }
+
+    const probe = await bounded(
+      page.evaluate(() => ({
+        title: document.title,
+        markers: document.querySelectorAll(
+          "#challenge-form, #challenge-running, #cf-challenge-running, .cf-browser-verification, #px-captcha, iframe[src*='captcha-delivery.com']",
+        ).length,
+        textLength: (document.body?.innerText || "").length,
+        links: document.querySelectorAll("a[href]").length,
+      })),
+      5000,
+      () => ({ title: "", markers: 0, textLength: 10000, links: 100 }),
+    );
+    if (looksLikeChallenge({ url: page.url(), ...probe })) throw new PageChallengedError();
 
     const finalUrl = page.url();
     const pageHost = new URL(finalUrl).hostname;
@@ -287,7 +323,9 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
       ...findingsForRequests(base.requests, rules),
       ...findingsForCookies(base.cookies),
       ...wall,
-      ...(base.consentWall ? [] : findingsForLegal(base.legal, imprintCheck, looksGerman || imprintMode === "always")),
+      ...(base.consentWall
+        ? []
+        : findingsForLegal(base.legal, imprintCheck, looksGerman || imprintMode === "always", /\.(de|at|ch|li)$/.test(host) || imprintMode === "always")),
       ...(consent && !(base.consentWall && !consent.banner.detected) ? findingsForConsent(consent, base.requests, rules) : []),
     ];
     const count = (s: "error" | "warn" | "info") => findings.filter((f) => f.severity === s).length;

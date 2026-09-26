@@ -29,6 +29,8 @@ export interface RequestRecord {
   host: string;
   resourceType: string;
   thirdParty: boolean;
+  /** Another domain of the same company as the site (e.g. "Google" for gstatic.com on youtube.com): not counted as third party. */
+  sameOperator?: string;
   /**
    * Google Consent Mode state sent with the request (the `gcs` parameter, e.g. "G100" = ad and
    * analytics storage denied). Kept on its own because the query string is otherwise dropped.

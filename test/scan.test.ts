@@ -87,6 +87,10 @@ describe("scan (real browser)", () => {
     await expect(scan(`${fx.origin}/blocked`, opts())).rejects.toThrow(/HTTP 403/);
   });
 
+  it("refuses to measure a bot check that answers HTTP 200", async () => {
+    await expect(scan(`${fx.origin}/bot-challenge`, opts())).rejects.toThrow(/bot check/);
+  });
+
   it("still measures a page whose load event never fires", async () => {
     const r = await scan(`${fx.origin}/slow-resource`, { ...opts(), timeoutMs: 20000 });
     expect(r.legal.imprint.found).toBe(true);

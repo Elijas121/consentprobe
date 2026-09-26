@@ -175,6 +175,9 @@ export async function startFixtures(): Promise<Fixtures> {
         // A consent bar at the top of the page that pushes the content down (no fixed position, no dialog
         // role); only its container name says what it is. Seen on a large software vendor's site.
         return html(200, page(`<div id="consentBannerCtrl" role="alert"><p>Wir verwenden optionale Cookies. <a href="/datenschutz">Datenschutzerklärung</a></p><button type="button" class="acc">Annehmen</button><button type="button" class="rej">Ablehnen</button><button type="button">Cookies verwalten</button></div><h1>Inline banner</h1><p>Content</p>${FOOTER}<script>document.querySelectorAll('#consentBannerCtrl .acc, #consentBannerCtrl .rej').forEach(function(b){b.addEventListener('click',function(){document.getElementById('consentBannerCtrl').remove();});});</script>`));
+      case "/bot-challenge":
+        // A bot check that answers HTTP 200 (like a "just a moment" interstitial): not the site.
+        return html(200, `<!doctype html><html lang="de"><head><title>Just a moment...</title></head><body><div id="challenge-running">Checking your browser before accessing the site.</div></body></html>`);
       case "/overlay-text-not-control":
         // Control-like words as plain text in a cookie overlay: nothing here may be clicked.
         return html(200, page(`<h1>Text only</h1>${FOOTER}<div style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Wir verwenden Cookies.</p><p>Alle akzeptieren</p><span>Nur notwendige</span></div>`));
