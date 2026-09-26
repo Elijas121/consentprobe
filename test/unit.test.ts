@@ -4,7 +4,9 @@ import { classifyRequests, describeConsentSignal, findingsForCookies, findingsFo
 import { CANDIDATE_LABEL, isAcceptLabel, isRejectLabel, isRejectLike } from "../src/consent.js";
 import { findLegalLinks } from "../src/legal.js";
 import { formatMarkdown, formatText } from "../src/report.js";
-import { checkLink, explainLaunchError } from "../src/scan.js";
+import { checkLink, explainLaunchError, isLocalHost, looksGermanSite, looksLikeChallenge } from "../src/scan.js";
+import { VERSION } from "../src/version.js";
+import { readFileSync } from "node:fs";
 import { explainNavigationError } from "../src/navigate.js";
 import { ask, bounded, newBudget } from "../src/bounded.js";
 import type { ScanResult } from "../src/types.js";
@@ -25,6 +27,25 @@ describe("classify", () => {
   it("treats subdomains of the page domain as first party", () => {
     expect(isThirdParty("cdn.example.de", "www.example.de")).toBe(false);
     expect(isThirdParty("example.com", "example.de")).toBe(true);
+  });
+  it("does not count another domain of the same company as a third party, but keeps customer hosting apart", () => {
+    expect(isThirdParty("fonts.gstatic.com", "www.youtube.com")).toBe(false);
+    expect(isThirdParty("fonts.googleapis.com", "www.google.de")).toBe(false);
+    expect(isThirdParty("open.scdn.co", "open.spotify.com")).toBe(false);
+    expect(isThirdParty("upload.wikimedia.org", "en.wikipedia.org")).toBe(false);
+    expect(isThirdParty("fonts.gstatic.com", "www.bakery.example")).toBe(true);
+    expect(isThirdParty("www.google-analytics.com", "someone.blogspot.com")).toBe(true);
+    expect(isThirdParty("www.google-analytics.com", "sites.google.com")).toBe(true);
+    expect(isThirdParty("stats.wp.com", "myblog.wordpress.com")).toBe(true);
+    expect(isThirdParty("stats.wp.com", "wordpress.com")).toBe(false);
+    expect(isThirdParty("s0.wp.com", "www.wordpress.com")).toBe(false);
+    expect(isThirdParty("d1.cloudfront.net", "www.amazon.de")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "evil-google.com")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "google.xyz")).toBe(true);
+    expect(isThirdParty("fonts.gstatic.com", "www.google.co.uk")).toBe(false);
+    const own = findingsForRequests(classifyRequests([{ url: "https://fonts.gstatic.com/s/x.woff2", resourceType: "font" }], "www.youtube.com"));
+    expect(own.find((f) => f.id.startsWith("third-party-before-consent"))).toBeUndefined();
+    expect(own.find((f) => f.id === "same-operator-services")?.message).toContain("Google");
   });
   it("matches rules on host suffix and path boundary, not substrings", () => {
     expect(matchRule(new URL("https://www.google-analytics.com/g/collect"))?.id).toBe("google-analytics");
@@ -199,6 +220,120 @@ describe("legal link detection", () => {
   });
 });
 
+describe("which sites get German rules", () => {
+  it("uses the page language first and a .ch domain only without one", () => {
+    expect(looksGermanSite("www.example.com", "de-DE")).toBe(true);
+    expect(looksGermanSite("www.example.de", "en")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "de-CH")).toBe(true);
+    expect(looksGermanSite("www.example.ch", "fr-CH")).toBe(false);
+    expect(looksGermanSite("www.example.ch", "it")).toBe(false);
+    expect(looksGermanSite("www.example.com", "en")).toBe(false);
+  });
+  it("finds French and Italian legal links of Swiss sites", () => {
+    const r = findLegalLinks([
+      { href: "https://e.ch/fr/mentions-legales", text: "Mentions légales", inFooter: true },
+      { href: "https://e.ch/fr/confidentialite", text: "Politique de confidentialité", inFooter: true },
+    ]);
+    expect(r.imprint.found).toBe(true);
+    expect(r.privacy.found).toBe(true);
+    const italian = findLegalLinks([
+      { href: "https://e.ch/it/note-legali", text: "Note legali", inFooter: true },
+      { href: "https://e.ch/it/privacy", text: "Informativa sulla privacy", inFooter: true },
+    ]);
+    expect(italian.imprint.found).toBe(true);
+    expect(italian.privacy.found).toBe(true);
+  });
+  it("keeps the version in the code equal to package.json", () => {
+    expect(VERSION).toBe(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+  });
+  it("counts HubSpot's cookie banner as a consent platform, not as tracking", () => {
+    expect(matchRule(new URL("https://js.hs-banner.com/v2/123/banner.js"))?.category).toBe("consent-platform");
+  });
+});
+
+describe("request classification details", () => {
+  it("drops requests the browser blocked itself and reads the Consent Mode state from Floodlight paths", () => {
+    const r = classifyRequests(
+      [
+        { url: "https://tracker.example/px.gif", resourceType: "image", blocked: true },
+        { url: "https://ad.doubleclick.net/activity;src=1;gcs=G100;ord=1", resourceType: "image" },
+      ],
+      "www.shop.example",
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0]?.consentSignal).toBe("G100");
+  });
+  it("marks requests made inside a third-party frame and keeps its fonts out of the site's findings", () => {
+    const r = classifyRequests(
+      [
+        { url: "https://fonts.gstatic.com/s/roboto/a.woff2", resourceType: "font", frameUrl: "https://www.youtube-nocookie.com/embed/x" },
+        { url: "https://fonts.gstatic.com/s/roboto/b.woff2", resourceType: "font", frameUrl: "https://www.shop.example/" },
+        { url: "https://www.youtube-nocookie.com/embed/x", resourceType: "document", frameUrl: "https://www.youtube-nocookie.com/embed/x" },
+        { url: "https://fonts.gstatic.com/s/roboto/c.woff2", resourceType: "font", frameUrl: "https://widget.booking.example/w" },
+      ],
+      "www.shop.example",
+    );
+    expect(r[0]?.embeddedIn).toBe("www.youtube-nocookie.com");
+    expect(r[1]?.embeddedIn).toBeUndefined();
+    // The player is reported as YouTube, so the fonts it loads for itself are not the site's.
+    const player = findingsForRequests([r[0]!, r[2]!]);
+    expect(player.find((f) => f.id === "third-party-before-consent:google-fonts")).toBeUndefined();
+    expect(player.find((f) => f.id === "third-party-before-consent:youtube")).toBeDefined();
+    expect(findingsForRequests([r[0]!, r[1]!, r[2]!]).find((f) => f.id === "third-party-before-consent:google-fonts")?.message).toContain("1 request(s)");
+    // A widget without a rule of its own is not reported anywhere: its fonts stay visible, marked as embedded.
+    const widget = findingsForRequests([r[3]!]).find((f) => f.id === "third-party-before-consent:google-fonts");
+    expect(widget?.message).toContain("widget.booking.example");
+  });
+  it("finds Austrian and older German imprint wording and treats a lone Kontakt link as uncertain", () => {
+    expect(findLegalLinks([{ href: "https://e.at/offenlegung", text: "Offenlegung", inFooter: true }]).imprint.found).toBe(true);
+    expect(findLegalLinks([{ href: "https://e.de/ak", text: "Anbieterkennzeichnung", inFooter: true }]).imprint.found).toBe(true);
+    const contact = findLegalLinks([{ href: "https://e.de/kontakt", text: "Kontakt", inFooter: true }]).imprint;
+    expect(contact.found).toBe(false);
+    expect(contact.candidate?.text).toBe("Kontakt");
+  });
+});
+
+describe("report safety", () => {
+  it("keeps page-controlled text on one printable line in text and Markdown reports", () => {
+    const evil = "Alle\nablehnen\u001b[31m\u202Eevil\r::error::x";
+    const r = {
+      tool: { name: "consentprobe", version: "0.0.0" },
+      url: "https://e.de/",
+      finalUrl: "https://e.de/\nfake",
+      scannedAt: "2026-01-01T00:00:00.000Z",
+      phase: "before-consent",
+      requests: [],
+      cookies: [],
+      legal: { imprint: { found: true }, privacy: { found: true } },
+      findings: [{ id: "x", severity: "warn", message: evil, evidence: [evil] }],
+      summary: { error: 0, warn: 1, info: 0, thirdPartyHosts: 0 },
+    } as unknown as ScanResult;
+    for (const out of [formatText(r), formatMarkdown(r)]) {
+      expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u202e]/);
+      expect(out.split("\n").some((l) => l.startsWith("::error::"))).toBe(false);
+      expect(out.split("\n").some((l) => l.trim() === "fake")).toBe(false);
+    }
+  });
+});
+
+describe("bot-challenge pages", () => {
+  const page = { url: "https://example.com/", title: "Example", markers: 0, textLength: 500, links: 5 };
+  it("recognizes challenge pages by URL, title or marker, only when the page is small", () => {
+    expect(looksLikeChallenge({ ...page, url: "https://www.example.com/?solution=1&js_challenge=1" })).toBe(true);
+    expect(looksLikeChallenge({ ...page, title: "Just a moment..." })).toBe(true);
+    expect(looksLikeChallenge({ ...page, title: "Nur einen Moment…" })).toBe(true);
+    expect(looksLikeChallenge({ ...page, markers: 1 })).toBe(true);
+    expect(looksLikeChallenge(page)).toBe(false);
+    expect(looksLikeChallenge({ ...page, title: "Just a moment: our story", textLength: 20000, links: 80 })).toBe(false);
+    expect(looksLikeChallenge({ ...page, title: "Access denied – what the court said", textLength: 5000 })).toBe(false);
+    // Small ordinary pages with generic titles are no bot check.
+    for (const title of ["Security Check – Ihre Heizung im Herbst", "One more step to your offer", "Please verify your e-mail"]) {
+      expect(looksLikeChallenge({ ...page, title }), title).toBe(false);
+    }
+  });
+});
+
 describe("consent control labels", () => {
   it("accepts clear general reject labels", () => {
     for (const l of ["Alle ablehnen", "Ablehnen", "Ablehnen und schließen", "Nur notwendige Cookies akzeptieren", "Nur notwendige", "Nur essenzielle", "Nur Essenzielle Cookies akzeptieren", "Verweigern", "Weiter ohne Zustimmung", "Reject all", "Decline", "Only necessary cookies"]) {
@@ -266,7 +401,9 @@ describe("report and errors", () => {
   });
   it("explains a missing browser in one actionable line", () => {
     const err = explainLaunchError(new Error("browserType.launch: Executable doesn't exist at /x. Please run: npx playwright install"));
-    expect(err.message).toBe("No browser found. Install one with: npx playwright install chromium (or use --browser chrome).");
+    expect(err.message).toBe("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
+    expect(explainLaunchError(new Error("browserType.launch: Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome")).message).toMatch(/Google Chrome is not installed/);
+    expect(explainLaunchError(new Error("browserType.launch: Host system is missing dependencies to run browsers.")).message).toMatch(/--with-deps/);
     expect(explainLaunchError(new Error("boom")).message).toBe("boom");
   });
 });
@@ -313,8 +450,45 @@ describe("time limits", () => {
 describe("legal link check", () => {
   const ctx = (statuses: number[]) => {
     let i = 0;
-    return { request: { get: async () => ({ status: () => statuses[Math.min(i++, statuses.length - 1)] ?? 0 }) } };
+    return { request: { get: async () => ({ status: () => statuses[Math.min(i++, statuses.length - 1)] ?? 0, headers: () => ({}) }) } };
   };
+  /** A server that answers each URL with a fixed status and optional redirect target; records what was asked. */
+  const site = (routes: Record<string, [number, string?]>) => {
+    const asked: string[] = [];
+    return {
+      asked,
+      request: {
+        get: async (url: string) => {
+          asked.push(url);
+          const [status, location] = routes[url] ?? [404];
+          return { status: () => status, headers: (): Record<string, string> => (location ? { location } : {}) };
+        },
+      },
+    };
+  };
+  it("follows redirects by hand and never into the local network", async () => {
+    const ok = site({ "https://e.de/ds": [301, "/datenschutz/"], "https://e.de/datenschutz/": [200] });
+    expect(await checkLink(ok, "https://e.de/ds", 30000, 1)).toBe(200);
+    const evil = site({ "https://e.de/ds": [302, "http://169.254.169.254/latest/meta-data/"] });
+    expect(await checkLink(evil, "https://e.de/ds", 30000, 1)).toBeUndefined();
+    expect(evil.asked).toEqual(["https://e.de/ds"]);
+    const direct = site({});
+    expect(await checkLink(direct, "http://127.0.0.1:8080/impressum", 30000, 1)).toBeUndefined();
+    expect(direct.asked).toEqual([]);
+    // A dev server the user typed may have its own legal pages checked.
+    const dev = site({ "http://localhost:3000/impressum": [200] });
+    expect(await checkLink(dev, "http://localhost:3000/impressum", 30000, 1, "localhost")).toBe(200);
+    // Only that typed host itself is exempt. A redirect away from it (here to the cloud metadata
+    // address) must not turn the check into a probe of the machine.
+    const devRedirect = site({
+      "http://localhost:3000/impressum": [302, "http://169.254.169.254/latest/meta-data/"],
+      "http://169.254.169.254/latest/meta-data/": [200],
+    });
+    expect(await checkLink(devRedirect, "http://localhost:3000/impressum", 30000, 1, "localhost")).toBeUndefined();
+    expect(devRedirect.asked).toEqual(["http://localhost:3000/impressum"]);
+    const loop = site({ "https://e.de/a": [302, "/b"], "https://e.de/b": [302, "/a"] });
+    expect(await checkLink(loop, "https://e.de/a", 30000, 1)).toBeUndefined();
+  });
   it("retries a transient server error and keeps the second answer", async () => {
     expect(await checkLink(ctx([502, 200]), "https://e.de/d", 30000, 1)).toBe(200);
   });
@@ -324,5 +498,15 @@ describe("legal link check", () => {
   it("keeps a real 404 without retrying", async () => {
     const c = ctx([404, 200]);
     expect(await checkLink(c, "https://e.de/d", 30000, 1)).toBe(404);
+  });
+  it("treats a refusal of the plain HTTP client as unverified, not as broken", async () => {
+    for (const s of [401, 403, 405, 451]) expect(await checkLink(ctx([s]), "https://e.de/d", 30000, 1), String(s)).toBeUndefined();
+    expect(await checkLink(ctx([410]), "https://e.de/d", 30000, 1)).toBe(410);
+  });
+  it("recognizes hosts on the machine or the local network", () => {
+    for (const h of ["localhost", "localhost.", "a.localhost", "intranet", "nas.local", "db.internal", "127.0.0.1", "10.1.2.3", "169.254.169.254", "172.20.0.1", "192.168.1.1", "100.64.0.1", "[::1]", "[::]", "fd00::1", "fe80::1", "64:ff9b::a9fe:a9fe"]) {
+      expect(isLocalHost(h), h).toBe(true);
+    }
+    for (const h of ["example.com", "8.8.8.8", "172.32.0.1", "2001:db8::1"]) expect(isLocalHost(h), h).toBe(false);
   });
 });

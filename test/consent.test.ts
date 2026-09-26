@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { chromium } from "playwright";
+import { newBudget } from "../src/bounded.js";
+import { CANDIDATE_LABEL, changedLabel } from "../src/consent.js";
 import { scan } from "../src/scan.js";
 import { startFixtures, type Fixtures } from "./fixtures.js";
 
@@ -110,6 +113,7 @@ describe("consent click test (real browser)", () => {
     expect((await readdir(dir)).sort()).toEqual([
       "accept-1-before-click.png",
       "accept-2-after-click.png",
+      "baseline-2-after-banner-wait.png",
       "baseline.png",
       "reject-1-before-click.png",
       "reject-2-after-click.png",
@@ -203,6 +207,91 @@ describe("consent click test (real browser)", () => {
     expect(find(none, "no-reject-control-on-first-layer")).toBeDefined();
   });
 
+  it("finds a consent bar that is part of the page flow, by its container name", async () => {
+    const r = await scan(`${fx.origin}/banner-inline-top`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Ablehnen");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+  });
+
+  it("reads controls built from <input> elements, and banners inside a shadow root", async () => {
+    for (const path of ["/banner-input-buttons", "/banner-shadow"]) {
+      const r = await scan(`${fx.origin}${path}`, opts());
+      expect(r.consent?.banner, path).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+      expect(r.consent?.reject?.control?.label, path).toBe("Alle ablehnen");
+      expect(r.consent?.reject?.clicked, path).toBe(true);
+      expect(r.consent?.accept?.clicked, path).toBe(true);
+    }
+  });
+
+  it("finds controls in a sticky button row inside the banner, and text split across web components", async () => {
+    for (const path of ["/banner-sticky-buttons", "/banner-shadow-split"]) {
+      const r = await scan(`${fx.origin}${path}`, opts());
+      expect(r.consent?.banner, path).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+      expect(r.consent?.reject?.control?.label, path).toBe("Ablehnen");
+      expect(r.consent?.reject?.clicked, path).toBe(true);
+      expect(r.consent?.accept?.clicked, path).toBe(true);
+    }
+  });
+
+  it("finds plain clickable controls inside an open shadow root", async () => {
+    const r = await scan(`${fx.origin}/banner-shadow-plain-controls`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+  }, 30000);
+
+  it("never takes a video content blocker in the page for the banner", async () => {
+    const r = await scan(`${fx.origin}/video-placeholder-late-banner`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+    expect(find(r, "no-reject-control-on-first-layer")).toBeUndefined();
+  });
+
+  it("finds the banner's link controls behind many matching links in the page", async () => {
+    const r = await scan(`${fx.origin}/banner-many-links`, opts());
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+  });
+
+  it("never clicks a banner mock-up inside a fixed page wrapper", async () => {
+    const r = await scan(`${fx.origin}/scroll-wrapper-mockup`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.accept?.clicked).toBe(false);
+  });
+
+  it("says 'no banner' plainly when the only silent frame is a lazy iframe that never loaded", async () => {
+    const r = await scan(`${fx.origin}/lazy-frame-no-banner`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.banner.incomplete).toBeUndefined();
+  });
+
+  it("never clicks buttons of an app shell, a video lightbox or a newsletter prompt", async () => {
+    for (const path of ["/fixed-shell-form", "/video-lightbox", "/newsletter-prompt"]) {
+      const r = await scan(`${fx.origin}${path}`, { ...opts(), bannerWaitMs: 800 });
+      expect(r.consent?.banner, path).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+      expect(r.consent?.reject?.clicked, path).toBe(false);
+      expect(r.consent?.accept?.clicked, path).toBe(false);
+    }
+  }, 30000);
+
+  it("finds the controls of a banner with a long text", async () => {
+    const r = await scan(`${fx.origin}/banner-long-text`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.clicked).toBe(true);
+  });
+
+  it("never takes a push-notification prompt for a cookie banner", async () => {
+    const r = await scan(`${fx.origin}/push-prompt`, { ...opts(), bannerWaitMs: 800 });
+    expect(r.consent?.banner).toMatchObject({ detected: false, rejectFound: false, acceptFound: false });
+    expect(r.consent?.reject?.clicked).toBe(false);
+    expect(r.consent?.accept?.clicked).toBe(false);
+  });
+
   it("never clicks control-like words that are plain text in an overlay", async () => {
     const r = await scan(`${fx.origin}/overlay-text-not-control`, { ...opts(), bannerWaitMs: 800 });
     expect(r.consent?.banner).toMatchObject({ detected: false, overlayHint: true });
@@ -211,15 +300,37 @@ describe("consent click test (real browser)", () => {
   });
 
   it("repeats a visit that missed a late banner, so both clicks are tested", async () => {
+    fx.resetLateTickets();
     const r = await scan(`${fx.origin}/banner-sometimes-late`, { ...opts(), bannerWaitMs: 1000 });
     expect(r.consent?.reject?.clicked).toBe(true);
     expect(r.consent?.accept?.clicked).toBe(true);
     expect(find(r, "consent-reject-not-tested")).toBeUndefined();
     expect(find(r, "consent-accept-not-tested")).toBeUndefined();
-  });
+    // One ticket per marked visit: the two click visits, plus the repeat of the one that missed the
+    // late banner. The baseline visit carries no marking binding and never asks (see the fixture).
+    expect(fx.lateTicketCount()).toBe(3);
+  }, 60000);
 
   it("skips the click visits when clickTest is off", async () => {
     const r = await scan(`${fx.origin}/banner-good`, { ...opts(), clickTest: false });
     expect(r.consent).toBeUndefined();
+  });
+});
+
+describe("label check before the click (real browser)", () => {
+  it("notices when a re-rendered banner put another control at the judged position", async () => {
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<div role="dialog"><p>Wir verwenden Cookies.</p><button>Alle ablehnen</button><button>Alle akzeptieren</button></div>`);
+      const locator = page.getByRole("button", { name: CANDIDATE_LABEL }).nth(0);
+      const target = { locator, frame: page.mainFrame(), control: { label: "Alle ablehnen", method: "text" as const } };
+      expect(await changedLabel(target, newBudget())).toBeUndefined();
+      // The banner re-renders: the reject control is gone, the accept control moves to its position.
+      await page.evaluate(() => document.querySelector("button")?.remove());
+      expect(await changedLabel(target, newBudget())).toBe("Alle akzeptieren");
+    } finally {
+      await browser.close();
+    }
   });
 });

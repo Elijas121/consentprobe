@@ -4,7 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Let new releases age a week before they are proposed (compromised packages are usually pulled fast).
+    cooldown:
+      default-days: 7
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    # Let new releases age a week before they are proposed (compromised packages are usually pulled fast).
+    cooldown:
+      default-days: 7

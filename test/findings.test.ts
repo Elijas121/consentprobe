@@ -73,6 +73,14 @@ describe("privacy link outside German rules", () => {
     expect(findingsForLegal(broken, "off", false).find((x) => x.id === "privacy-link-unreachable")?.severity).toBe("warn");
     expect(findingsForLegal(broken, "off", true).find((x) => x.id === "privacy-link-unreachable")?.severity).toBe("error");
   });
+
+  it("warns instead of erring about a missing imprint when only the language, not the domain, points to Germany", () => {
+    const missing = { imprint: { found: false }, privacy: { found: true, href: "https://example.com/privacy", status: 200 } };
+    const international = findingsForLegal(missing, "check", true, false).find((x) => x.id === "imprint-link-missing");
+    expect(international?.severity).toBe("warn");
+    expect(international?.message).toContain("operator is established");
+    expect(findingsForLegal(missing, "check", true, true).find((x) => x.id === "imprint-link-missing")?.severity).toBe("error");
+  });
 });
 
 describe("report details", () => {
@@ -125,5 +133,46 @@ describe("legal links without href", () => {
     const { findLegalLinks } = await import("../src/legal.js");
     expect(findLegalLinks([{ href: "", text: "Datenschutz", inFooter: true, scripted: true }]).privacy).toMatchObject({ found: true, scripted: true });
     expect(findLegalLinks([{ href: "", text: "Mehr zum Datenschutz", inFooter: true, scripted: true }]).privacy.found).toBe(false);
+  });
+});
+
+describe("fairness fixes from the critic review", () => {
+  it("says the reject search was incomplete instead of claiming there is no reject control", () => {
+    const t: ConsentTest = {
+      banner: { detected: true, rejectFound: false, acceptFound: true, rejectSearchIncomplete: true },
+      accept: { action: "accept", clicked: true, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] },
+    };
+    const f = findingsForConsent(t, []);
+    expect(f.find((x) => x.id === "no-reject-control-on-first-layer")).toBeUndefined();
+    expect(f.find((x) => x.id === "reject-search-incomplete")?.severity).toBe("info");
+  });
+
+  it("reports a click visit that failed as not tested, not as a failed click", () => {
+    const t: ConsentTest = {
+      banner: { detected: true, rejectFound: false, acceptFound: true },
+      reject: { action: "reject", clicked: false, requestsAfter: [], cookiesBefore: [], cookiesAfter: [], error: "visit failed: net::ERR_CONNECTION_RESET" },
+      accept: { action: "accept", clicked: true, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] },
+    };
+    const f = findingsForConsent(t, []);
+    expect(f.find((x) => x.id === "consent-reject-visit-failed")?.message).toContain("was not tested");
+    expect(f.find((x) => x.id === "consent-reject-click-failed")).toBeUndefined();
+  });
+
+  it("rates cookieless analytics and performance monitoring as a warning, Google Analytics as an error", () => {
+    const f = findingsForRequests([req("https://plausible.io/api/event"), req("https://bam.nr-data.net/1/x"), req("https://www.google-analytics.com/g/collect")]);
+    expect(f.find((x) => x.id === "third-party-before-consent:plausible")?.severity).toBe("warn");
+    expect(f.find((x) => x.id === "third-party-before-consent:plausible")?.message).toContain("stores nothing on the device");
+    expect(f.find((x) => x.id === "third-party-before-consent:newrelic")?.severity).toBe("warn");
+    expect(f.find((x) => x.id === "third-party-before-consent:google-analytics")?.severity).toBe("error");
+  });
+
+  it("recognizes HubSpot and Microsoft Advertising tracking cookies", () => {
+    const f = findingsForCookies([
+      { name: "hubspotutk", domain: "shop.example", thirdParty: false, expires: 1 },
+      { name: "_uetvid", domain: "shop.example", thirdParty: false, expires: 1 },
+    ]);
+    const ids = f.map((x) => x.id);
+    expect(ids).toContain("tracker-cookie-before-consent:hubspot");
+    expect(ids).toContain("tracker-cookie-before-consent:microsoft-advertising");
   });
 });

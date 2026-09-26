@@ -66,9 +66,23 @@ export async function visitorIdentity(browser: Browser): Promise<VisitorIdentity
   }
 }
 
+/** Basic-auth login from the typed URL, bound to that URL's origin. */
+export interface HttpCredentials {
+  username: string;
+  password: string;
+  origin: string;
+}
+
 /** Options for a fresh visitor context: German locale and, if needed, the regular user agent. */
-export function visitorContextOptions(identity?: VisitorIdentity): BrowserContextOptions {
-  return identity ? { locale: "de-DE", userAgent: identity.userAgent } : { locale: "de-DE" };
+export function visitorContextOptions(
+  identity?: VisitorIdentity,
+  httpCredentials?: HttpCredentials,
+): BrowserContextOptions {
+  return {
+    locale: "de-DE",
+    ...(identity ? { userAgent: identity.userAgent } : {}),
+    ...(httpCredentials ? { httpCredentials } : {}),
+  };
 }
 
 /**
@@ -82,7 +96,8 @@ export async function applyIdentity(page: Page, identity?: VisitorIdentity): Pro
   await session
     .send("Emulation.setUserAgentOverride", {
       userAgent: identity.userAgent,
-      acceptLanguage: "de-DE,de;q=0.9",
+      // Chromium adds the q-values itself; "de-DE,de" goes out as "de-DE,de;q=0.9", like a normal browser.
+      acceptLanguage: "de-DE,de",
       userAgentMetadata: identity.metadata,
     })
     .catch(() => undefined);

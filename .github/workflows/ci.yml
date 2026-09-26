@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20, 22]
+        node: [22, 24, 26]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -50,3 +50,35 @@ jobs:
           url: https://example.com
           fail-on: never
           imprint: never
+      - name: The action wrote a report
+        run: test -s consentprobe-report.md
+
+  package:
+    # Installs the packed tarball like a user would and runs the installed CLI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: npm pack --pack-destination "$RUNNER_TEMP"
+      - name: Install the tarball in an empty project and scan a page
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir user && cd user && npm init -y >/dev/null
+          npm install ../consentprobe-*.tgz
+          npx consentprobe --version
+          npx consentprobe --install-browser --with-deps
+          set +e
+          npx consentprobe https://example.com --no-click-test --imprint never --format json --out report.json
+          code=$?
+          set -e
+          node -e "const r=require('./report.json'); if (!r.tool.browser || !r.finalUrl) process.exit(1)"
+          # Exit codes: 0 = passed, 1 = findings at or above --fail-on.
+          [ "$code" -le 1 ]
+          npx consentprobe a.example b.example && exit 1 || [ $? -eq 2 ]

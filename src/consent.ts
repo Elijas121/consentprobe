@@ -3,8 +3,9 @@ import { join } from "node:path";
 import type { Browser, Frame, Locator, Page } from "playwright";
 import { classifyCookies, classifyRequests } from "./findings.js";
 import { ask, newBudget, type QueryBudget } from "./bounded.js";
-import { applyIdentity, visitorContextOptions, type VisitorIdentity } from "./identity.js";
+import { applyIdentity, visitorContextOptions, type HttpCredentials, type VisitorIdentity } from "./identity.js";
 import { explainNavigationError, openPage } from "./navigate.js";
+import { recordRequests, type RawRequest } from "./record.js";
 import type { ConsentBanner, ConsentControl, ConsentSession } from "./types.js";
 
 interface CmpDef {
@@ -49,6 +50,21 @@ const REJECT_STRICT: RegExp[] = [
   /^(reject|decline|deny|refuse)(\s+all)?(\s+cookies)?$/,
   /^((accept|allow|use)\s+)?(only\s+)?(strictly\s+)?(necessary|essential|required)(\s+cookies)?(\s+only)?$/,
   /^continue\s+without\s+(accepting|consent)$/,
+  /^(reject|decline|deny|refuse)\s+(all\s+)?(optional|non\s+essential|nonessential|non\s+necessary|additional|unnecessary)\s+cookies$/,
+  // Google Funding Choices, InMobi (Quantcast) and Klaro word their general reject as a refusal of consent.
+  /^(nicht\s+einwilligen|ich\s+(willige\s+nicht\s+ein|stimme\s+nicht\s+zu|lehne\s+ab)|do\s+not\s+consent|don\s+t\s+consent|disagree|i\s+(decline|disagree|do\s+not\s+(accept|agree)))$/,
+  // French, Italian, Spanish, Dutch, Polish. "Reject and subscribe" (pay or okay) stays out on purpose.
+  /^(tout\s+)?refuser(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
+  /^(je\s+refuse(\s+tout)?|continuer\s+sans\s+accepter)$/,
+  /^(accepter\s+)?(uniquement|seulement)\s+(les\s+)?cookies\s+(strictement\s+)?(nécessaires|essentiels)$/,
+  /^(rifiuta(\s+tutt[oi])?(\s+i\s+cookie)?|rifiuto|non\s+accetto|continua\s+senza\s+accettare)$/,
+  /^(accetta\s+)?solo\s+(i\s+)?(cookie\s+)?(necessari|essenziali|tecnici)$/,
+  /^(rechazar(\s+tod[oa]s?)?(\s+las\s+cookies)?|continuar\s+sin\s+aceptar)$/,
+  /^(aceptar\s+)?solo\s+(las\s+)?(cookies\s+)?(necesarias|esenciales|técnicas)$/,
+  /^((alles|alle(\s+cookies)?)\s+)?(weigeren|afwijzen)$/,
+  /^alleen\s+(noodzakelijke|functionele|essentiële)(\s+cookies)?(\s+(accepteren|toestaan))?$/,
+  /^odrzuć(\s+wszystk(ie|o))?$/,
+  /^(akceptuj\s+)?tylko\s+(niezbędne|wymagane|konieczne)(\s+(pliki\s+)?cookies?)?$/,
 ];
 const ACCEPT_STRICT: RegExp[] = [
   /^(alle[ns]?(\s+(cookies|zwecken))?\s+)?(akzeptieren|zustimmen|einwilligen|annehmen|erlauben|zulassen)(\s+(und\s+)?(weiter|schließen|schliessen|fortfahren))?$/,
@@ -58,17 +74,30 @@ const ACCEPT_STRICT: RegExp[] = [
   /^geht\s+klar$/,
   /^(accept|allow|agree)(\s+(all|everything))?(\s+cookies)?(\s+(and\s+)?(continue|close))?$/,
   /^i\s+(agree|accept)(\s+all)?(\s+cookies)?$/,
+  // Google Funding Choices ("Consent" / "Einwilligen") and Klaro ("Das ist ok").
+  /^(consent|das\s+ist\s+ok)$/,
+  // French, Italian, Spanish, Dutch, Polish. A bare "Autoriser" is left out: push-notification prompts use it.
+  /^(tout\s+)?accepter(\s+tout)?(\s+les\s+cookies)?(\s+et\s+(fermer|continuer))?$/,
+  /^(j\s+accepte(\s+tout)?|tout\s+autoriser|autoriser\s+tous\s+les\s+cookies)$/,
+  /^accett[ao](\s+tutt[oi])?(\s+i\s+cookie)?(\s+e\s+(chiudi|continua))?$/,
+  /^consenti\s+tutt[oi]$/,
+  /^acept(ar|o)(\s+tod[oa]s?)?(\s+las\s+cookies)?(\s+y\s+(cerrar|continuar))?$/,
+  /^permitir\s+todas?(\s+las\s+cookies)?$/,
+  /^((alles|alle(\s+cookies)?)\s+)?accepteren(\s+en\s+(sluiten|doorgaan))?$/,
+  /^(akkoord(\s+en\s+doorgaan)?|(alles|alle\s+cookies)\s+toestaan)$/,
+  /^(za)?akceptuj(ę)?(\s+wszystk(ie|o))?$/,
+  /^(zgadzam\s+się|zezwól\s+na\s+wszystkie)$/,
 ];
 /** Loose: anything that mentions rejecting. Reported, never clicked. */
-const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse/i;
-const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow/i;
+const REJECT_LIKE = /ablehnen|verweigern|reject|decline|deny|refuse|refuser|rifiut|rechaz|weiger|afwijz|odrzu/i;
+const ACCEPT_LIKE = /akzeptier|zustimmen|einwilligen|einverstanden|annehmen|accept|agree|allow|accett|acept|akcept|akkoord/i;
 
 /**
  * Cheap pre-filter for the accessible-name query. Invariant (tested): every label that the
  * strict patterns accept must also pass this filter, otherwise a control is silently missed.
  */
 export const CANDIDATE_LABEL =
-  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without/i;
+  /ablehn|verweiger|reject|declin|deny|refus|akzeptier|zustimm|stimme\s+zu|einwillig|einverstanden|annehm|erlaub|zulass|accept|agree|allow|geht\s+klar|notwendig|erforderlich|essen[zt]iell|necessary|essential|required|ohne\s+(zustimmung|einwilligung|akzeptieren)|without|essenti|consent|lehne\s+ab|nicht\s+zu|disagree|decline|das\s+ist\s+ok|refus|rifiut|non\s+accetto|rechaz|weiger|afwijz|odrzu|accett|acept|akcept|akkoord|toestaan|zgadzam|zezwól|consenti|permitir|autoriser|nécessaires|essentiels|necessari|essenziali|tecnici|necesarias|esenciales|técnicas|noodzakelijk|functionele|niezbędne|wymagane|konieczne/i;
 
 export const isRejectLabel = (label: string): boolean => REJECT_STRICT.some((re) => re.test(normalizeLabel(label)));
 export const isAcceptLabel = (label: string): boolean => ACCEPT_STRICT.some((re) => re.test(normalizeLabel(label)));
@@ -77,16 +106,37 @@ export const isRejectLike = (label: string): boolean => REJECT_LIKE.test(label);
 const MAX_LABEL = 50;
 
 /**
- * True when the element sits in a real overlay (fixed or sticky ancestor, or a dialog).
- * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked.
+ * True when the element sits in a real overlay (fixed or sticky ancestor, or a dialog), or in a
+ * container the site itself names as its cookie or consent UI (id, class or tag name), such as a
+ * consent bar at the top of the page that pushes the content down instead of floating over it.
+ * Marketing mock-ups of banners inside the page content do not qualify, so they are never clicked, and
+ * neither do content blockers: the "load this video / map" placeholders that consent tools put in the page.
  */
 const isOverlayElement = (el: Element): boolean => {
-  for (let n: Element | null = el; n; n = n.parentElement) {
+  // Walk out of shadow roots too: some banners live in a web component.
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
+  for (let n: Element | null = el; n; n = up(n)) {
+    // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+    if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
     const position = getComputedStyle(n).position;
-    if (position === "fixed" || position === "sticky") return true;
+    if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
     const role = n.getAttribute("role");
     if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") {
       return true;
+    }
+    // <html> and <body> often carry state classes such as "cookie-banner-open"; they name the page, not the banner.
+    if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+      if (((n as HTMLElement).innerText || "").length < 4000) return true;
     }
   }
   return false;
@@ -104,6 +154,56 @@ const isChoicePart = (el: Element): boolean =>
   el.hasAttribute("aria-pressed") ||
   el.querySelector("input, select, textarea") !== null;
 
+/**
+ * True when the control's surroundings talk about cookies, consent, privacy or tracking. "Erlauben"
+ * and "Ablehnen" also sit on push-notification and newsletter prompts; there they must never be
+ * taken for a cookie decision. Stops at page-sized containers, so the rest of the page does not count.
+ */
+const hasConsentContext = (el: Element): boolean => {
+  const words = /cookie|consent|einwillig|zustimm|datenschutz|privacy|privatsph|tracking|partner|personalis|confidentialit|donn[ée]es personnelles|riservatezza|privacidad|toestemming|prywatno/i;
+  const up = (x: Element): Element | null => x.parentElement ?? ((x.getRootNode() as { host?: Element }).host ?? null);
+  // innerText leaves out open shadow roots; banners built from nested web components keep their text there.
+  const deepText = (x: Element): string => {
+    let text = (x as HTMLElement).innerText || "";
+    const hosts = [x, ...Array.from(x.querySelectorAll("*"))].filter((e) => e.shadowRoot);
+    for (const host of hosts.slice(0, 20)) {
+      for (const child of Array.from(host.shadowRoot?.children ?? [])) {
+        if (child.tagName !== "STYLE" && child.tagName !== "SCRIPT") text += ` ${deepText(child)}`;
+      }
+    }
+    return text;
+  };
+  const isOverlayBox = (x: Element): boolean => {
+    const position = getComputedStyle(x).position;
+    const role = x.getAttribute("role");
+    return position === "fixed" || position === "sticky" || role === "dialog" || role === "alertdialog" || x.getAttribute("aria-modal") === "true" || x.tagName === "DIALOG";
+  };
+  const outerOverlay = (x: Element): boolean => {
+    for (let o = up(x); o && o.tagName !== "BODY"; o = up(o)) if (isOverlayBox(o)) return true;
+    return false;
+  };
+  // Button labels ("Zustimmen", "Ablehnen") do not make their own context: only the prose around them
+  // counts, and a label only when it names cookies or consent itself ("Cookies akzeptieren").
+  const labelWords = /cookie|consent|einwillig|tracking|datenschutz|privacy|privatsph/i;
+  let n: Element | null = up(el);
+  for (let depth = 0; n && n.tagName !== "BODY" && depth < 16; depth += 1, n = up(n)) {
+    const text = deepText(n);
+    const box = isOverlayBox(n);
+    // A page-sized container is the page, not the prompt. An overlay may hold a long text (vendor lists).
+    if (text.length > (box ? 30000 : 6000)) return false;
+    const labels = Array.from(n.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']"))
+      .map((b) => ((b as HTMLElement).innerText || (b as HTMLInputElement).value || "").trim())
+      .filter(Boolean);
+    let prose = text;
+    for (const label of labels) prose = prose.replace(label, " ");
+    if (words.test(prose) || labels.some((label) => labelWords.test(label))) return true;
+    // The overlay is the prompt; the page behind it (with its privacy link in the footer) does not count.
+    // A sticky button row or a fixed toolbar inside the prompt is not the whole prompt: keep walking to it.
+    if (isOverlayBox(n) && !outerOverlay(n)) return false;
+  }
+  return false;
+};
+
 async function inOverlay(locator: Locator, frame: Frame, page: Page, q: QueryBudget): Promise<boolean> {
   if (await ask(() => locator.evaluate(isOverlayElement), q, false, frame)) return true;
   if (frame === page.mainFrame()) return false;
@@ -115,6 +215,7 @@ async function inOverlay(locator: Locator, frame: Frame, page: Page, q: QueryBud
 interface Found {
   locator: Locator;
   control: ConsentControl;
+  frame: Frame;
 }
 
 interface Controls {
@@ -128,14 +229,51 @@ interface Controls {
 async function labelOf(el: Locator, q: QueryBudget, frame: Frame): Promise<string> {
   const text = await ask(() => el.innerText({ timeout: 1000 }), q, "", frame);
   const aria = text ? "" : ((await ask(() => el.getAttribute("aria-label", { timeout: 1000 }), q, null, frame)) ?? "");
-  return (text || aria).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
+  // <input type="button" value="Alle ablehnen"> has no text; its value is the label.
+  const value = text || aria ? "" : ((await ask(() => el.getAttribute("value", { timeout: 1000 }), q, null, frame)) ?? "");
+  return (text || aria || value).replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The control's current label if it is no longer the one that was judged, else undefined. Controls
+ * are found by position; a banner that re-renders can put another element at that position.
+ */
+export async function changedLabel(target: Pick<Found, "locator" | "frame" | "control">, q: QueryBudget): Promise<string | undefined> {
+  const now = await labelOf(target.locator, q, target.frame);
+  return normalizeLabel(now) === normalizeLabel(target.control.label) ? undefined : now;
+}
+
+/**
+ * Frames that can hold a banner. A lazy iframe below the fold (a map in the footer) is never loaded
+ * during a scan: it has no document, cannot show anything, and asking it never returns, which made
+ * whole searches "incomplete". A frame that did start loading but hangs still counts.
+ */
+async function searchableFrames(page: Page, q: QueryBudget): Promise<Frame[]> {
+  const out: Frame[] = [];
+  for (const frame of page.frames()) {
+    if (frame !== page.mainFrame() && frame.url() === "") {
+      const parent = frame.parentFrame() ?? page.mainFrame();
+      const lazyOffscreen = await ask(
+        async () => {
+          const el = await frame.frameElement();
+          return el.evaluate((x) => (x as HTMLIFrameElement).loading === "lazy" && (x as HTMLIFrameElement).getBoundingClientRect().top > innerHeight * 1.5);
+        },
+        q,
+        false,
+        parent,
+      );
+      if (lazyOffscreen) continue;
+    }
+    out.push(frame);
+  }
+  return out;
 }
 
 async function bySelector(page: Page, selector: string, q: QueryBudget): Promise<Found | undefined> {
-  for (const frame of page.frames()) {
+  for (const frame of await searchableFrames(page, q)) {
     const locator = frame.locator(selector).first();
     if (await ask(() => locator.isVisible(), q, false, frame)) {
-      return { locator, control: { label: (await labelOf(locator, q, frame)) || selector, method: "cmp-selector" } };
+      return { locator, frame, control: { label: (await labelOf(locator, q, frame)) || selector, method: "cmp-selector" } };
     }
   }
   return undefined;
@@ -151,17 +289,45 @@ const PLAIN_MARK = "data-consentprobe-control";
  */
 function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
   const candidate = new RegExp(args.source, args.flags);
+  // Walk out of open shadow roots too: a web-component banner's content is not part of the host and
+  // not reachable through a "body *" query. Same walk as isOverlayElement.
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
   const inOverlay = (el: Element): boolean => {
-    for (let n: Element | null = el; n; n = n.parentElement) {
+    for (let n: Element | null = el; n; n = up(n)) {
+      // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+      if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
       const position = getComputedStyle(n).position;
-      if (position === "fixed" || position === "sticky") return true;
+      if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
       const role = n.getAttribute("role");
       if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
+      // Same rule as isOverlayElement: a container the site names as its cookie or consent UI.
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+        if (((n as HTMLElement).innerText || "").length < 4000) return true;
+      }
     }
     return false;
   };
   let marked = 0;
-  for (const el of Array.from(document.querySelectorAll("body *"))) {
+  // The page's own elements plus the content of every open shadow root, like cookieOverlayVisible.
+  const all: Element[] = [];
+  const walk = (root: Element | ShadowRoot) => {
+    for (const e of Array.from(root.querySelectorAll("*"))) {
+      all.push(e);
+      if (e.shadowRoot) walk(e.shadowRoot);
+    }
+  };
+  if (document.body) walk(document.body);
+  for (const el of all) {
     const role = el.getAttribute("role");
     if (el.tagName === "BUTTON" || role === "button" || role === "link" || (el.tagName === "A" && el.hasAttribute("href"))) continue;
     // Cheap text filter first; style and layout queries only for the few elements that pass.
@@ -185,21 +351,72 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
   return marked;
 }
 
+/**
+ * Indices (at most `max`) of the elements that sit in an overlay, in one call. Same rule as
+ * isOverlayElement (page functions cannot share code). Without this pre-filter, a page with many
+ * matching links ("Erlaubnis", "Zustimmung" in headlines) pushed the banner's controls past the cap.
+ */
+function overlayIndices(els: Element[], max: number): number[] {
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
+  // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
+  // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
+  const pageShell = (x: Element): boolean => {
+    if (x.querySelector("main") || x.querySelectorAll("a[href]").length > 100) return true;
+    const field = Array.from(x.querySelectorAll("input[type='text'], input[type='email'], input[type='tel'], input:not([type]), textarea")).some(
+      (f) => f.getBoundingClientRect().width > 0,
+    );
+    const all = document.body?.querySelectorAll("*").length ?? 0;
+    return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
+  };
+  const inOverlay = (el: Element): boolean => {
+    for (let n: Element | null = el; n; n = up(n)) {
+      // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
+      if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
+      const position = getComputedStyle(n).position;
+      if ((position === "fixed" || position === "sticky") && !pageShell(n)) return true;
+      const role = n.getAttribute("role");
+      if (role === "dialog" || role === "alertdialog" || n.getAttribute("aria-modal") === "true" || n.tagName === "DIALOG") return true;
+      if (n.tagName !== "BODY" && n.tagName !== "HTML" && /cookie|consent|gdpr/i.test(`${n.tagName} ${n.id} ${n.getAttribute("class") ?? ""}`)) {
+        if (((n as HTMLElement).innerText || "").length < 4000) return true;
+      }
+    }
+    return false;
+  };
+  const out: number[] = [];
+  for (let i = 0; i < els.length && out.length < max; i += 1) {
+    const el = els[i];
+    if (el && inOverlay(el)) out.push(i);
+  }
+  return out;
+}
+
 async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "reject" | "accept" | "rejectLike">> {
   const out: Pick<Controls, "reject" | "accept" | "rejectLike"> = {};
   const candidates = CANDIDATE_LABEL;
-  for (const frame of page.frames()) {
+  for (const frame of await searchableFrames(page, q)) {
+    // A cross-origin banner frame is itself the overlay; everything inside it qualifies.
+    const frameIsOverlay =
+      frame !== page.mainFrame() &&
+      (await ask(async () => {
+        const el = await frame.frameElement();
+        return el.evaluate(isOverlayElement);
+      }, q, false, page.mainFrame()));
     for (const role of ["button", "link"] as const) {
       const all = frame.getByRole(role, { name: candidates });
-      const count = Math.min(await ask(() => all.count(), q, 0, frame), 15);
-      for (let i = 0; i < count; i++) {
+      const total = await ask(() => all.count(), q, 0, frame);
+      const indices =
+        frameIsOverlay
+          ? [...Array(Math.min(total, 15)).keys()]
+          : await ask(() => all.evaluateAll(overlayIndices, 15), q, [] as number[], frame);
+      for (const i of indices) {
         const locator = all.nth(i);
         if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
         const label = await labelOf(locator, q, frame);
         if (!label || label.length > MAX_LABEL) continue;
         if (!(await inOverlay(locator, frame, page, q))) continue;
         if (await ask(() => locator.evaluate(isChoicePart), q, false, frame)) continue;
-        const found: Found = { locator, control: { label, method: "text" } };
+        if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
+        const found: Found = { locator, frame, control: { label, method: "text" } };
         if (isRejectLabel(label)) out.reject ??= found;
         else if (isAcceptLabel(label)) out.accept ??= found;
         else if (isRejectLike(label)) out.rejectLike ??= label;
@@ -215,7 +432,8 @@ async function byText(page: Page, q: QueryBudget): Promise<Pick<Controls, "rejec
       if (!(await ask(() => locator.isVisible(), q, false, frame))) continue;
       const label = await labelOf(locator, q, frame);
       if (!label || label.length > MAX_LABEL) continue;
-      const found: Found = { locator, control: { label, method: "text" } };
+      if (!(await ask(() => locator.evaluate(hasConsentContext), q, false, frame))) continue;
+      const found: Found = { locator, frame, control: { label, method: "text" } };
       if (isRejectLabel(label)) out.reject ??= found;
       else if (isAcceptLabel(label)) out.accept ??= found;
       else if (isRejectLike(label)) out.rejectLike ??= label;
@@ -265,14 +483,25 @@ export async function locateControls(page: Page, waitMs: number, q: QueryBudget)
   return {};
 }
 
-/** True when a visible fixed overlay mentions cookies, even if no control could be recognized. */
+/** True when a visible overlay or named consent container mentions cookies, even if no control could be recognized. */
 async function cookieOverlayVisible(page: Page, q: QueryBudget): Promise<boolean> {
-  for (const frame of page.frames()) {
+  for (const frame of await searchableFrames(page, q)) {
     const hit = await ask(
       () => frame.evaluate(() => {
-        for (const el of Array.from(document.querySelectorAll("body *"))) {
+        // Include the content of open shadow roots: some banners are web components.
+        const all: Element[] = [];
+        const walk = (root: Document | ShadowRoot) => {
+          for (const e of Array.from(root.querySelectorAll("*"))) {
+            all.push(e);
+            if (e.shadowRoot) walk(e.shadowRoot);
+          }
+        };
+        walk(document);
+        for (const el of all) {
+          if (el.tagName === "HTML" || el.tagName === "BODY" || el.tagName === "HEAD") continue;
           const style = getComputedStyle(el);
-          if (style.position !== "fixed" && style.position !== "sticky") continue;
+          const named = /cookie|consent|gdpr/i.test(`${el.tagName} ${el.id} ${el.getAttribute("class") ?? ""}`);
+          if (style.position !== "fixed" && style.position !== "sticky" && !named) continue;
           const rect = el.getBoundingClientRect();
           // Thin notice bars (about 30 px) count too; small widgets such as chat bubbles do not.
           if (rect.width < 300 || rect.height < 20 || style.visibility === "hidden" || style.display === "none") continue;
@@ -297,6 +526,8 @@ export interface SessionOptions {
   firstParty: string[];
   screenshotDir?: string;
   identity?: VisitorIdentity;
+  /** Basic-auth credentials from the URL (password-protected test sites). */
+  httpCredentials?: HttpCredentials;
 }
 
 async function shot(page: Page, dir: string | undefined, name: string): Promise<void> {
@@ -311,9 +542,9 @@ export async function runConsentSession(
   action: "reject" | "accept",
   o: SessionOptions,
 ): Promise<{ banner: ConsentBanner; session: ConsentSession }> {
-  const context = await browser.newContext(visitorContextOptions(o.identity));
+  const context = await browser.newContext(visitorContextOptions(o.identity, o.httpCredentials));
   try {
-    const raw: { url: string; resourceType: string }[] = [];
+    const raw: RawRequest[] = [];
     // The page reports the exact moment of the physical press (in any frame, before the site's own
     // handlers run). Requests before that moment are "before the click", even if they arrive while
     // a screenshot is taken. Armed only right before our own click.
@@ -330,7 +561,7 @@ export async function runConsentSession(
     await applyIdentity(page, o.identity);
     const q: QueryBudget = newBudget();
     page.setDefaultTimeout(Math.min(o.timeoutMs, 10000));
-    page.on("request", (req) => raw.push({ url: req.url(), resourceType: req.resourceType() }));
+    recordRequests(page, raw);
 
     await openPage(page, url, o.timeoutMs).catch((err: unknown) => {
       throw explainNavigationError(err, o.timeoutMs);
@@ -345,8 +576,10 @@ export async function runConsentSession(
       rejectLike: controls.rejectLike,
       overlayHint: controls.accept || controls.reject ? undefined : await cookieOverlayVisible(page, q),
     };
-    // A frozen frame hides controls: never report "no banner" when parts of the page did not answer.
+    // A frozen frame hides controls: never report "no banner" when parts of the page did not answer,
+    // and never "no reject control" when the search for it did not finish.
     if (q.timeouts > 0 && !banner.detected) banner.incomplete = true;
+    if (q.timeouts > 0 && banner.detected && !banner.rejectFound) banner.rejectSearchIncomplete = true;
     const target = action === "reject" ? controls.reject : controls.accept;
     const session: ConsentSession = { action, clicked: false, requestsAfter: [], cookiesBefore: [], cookiesAfter: [] };
     if (!target) {
@@ -356,6 +589,16 @@ export async function runConsentSession(
 
     const pageHost = new URL(page.url()).hostname;
     session.control = target.control;
+    // The control is found by position; if the page re-rendered since, that position may hold another
+    // element now. Only click when the label is still the one that was judged.
+    if (target.control.method === "text") {
+      const now = await changedLabel(target, q);
+      if (now !== undefined) {
+        session.error = `click skipped: the control changed before the click (now "${now.slice(0, 40)}")`;
+        await shot(page, o.screenshotDir, `${action}-0-control-changed.png`);
+        return { banner, session };
+      }
+    }
     await shot(page, o.screenshotDir, `${action}-1-before-click.png`);
     // Snapshot and fallback marker directly before the click, after the (slow) screenshot.
     session.cookiesBefore = classifyCookies(await context.cookies(), pageHost, o.firstParty);

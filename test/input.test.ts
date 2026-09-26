@@ -5,7 +5,12 @@ describe("URL input", () => {
   it("adds https:// when the scheme is missing", () => {
     expect(normalizeUrlInput("example.com")).toBe("https://example.com/");
     expect(normalizeUrlInput(" www.example.de/impressum ")).toBe("https://www.example.de/impressum");
-    expect(normalizeUrlInput("localhost:3000/a")).toBe("https://localhost:3000/a");
+  });
+
+  it("uses http:// for localhost and IP addresses, which are nearly always local test servers", () => {
+    expect(normalizeUrlInput("localhost:3000/a")).toBe("http://localhost:3000/a");
+    expect(normalizeUrlInput("127.0.0.1:8080")).toBe("http://127.0.0.1:8080/");
+    expect(normalizeUrlInput("localhost.example.com")).toBe("https://localhost.example.com/");
   });
 
   it("keeps an explicit http or https URL", () => {
@@ -31,6 +36,7 @@ describe("millisecond options", () => {
     expect(() => parseMs("settle", "-5", 0)).toThrow(/whole number/);
     expect(() => parseMs("settle", "1.5", 0)).toThrow(/whole number/);
     expect(() => parseMs("timeout", "500", 1000)).toThrow(/at least 1000/);
+    expect(() => parseMs("timeout", "999999999", 1000)).toThrow(/at most 600000/);
   });
 });
 
@@ -49,5 +55,11 @@ describe("--rules files", () => {
     expect(() => parseRules('[{"id":"x","name":"X","category":"tracking","hosts":["a.example"]}]')).toThrow(/unknown category "tracking".*analytics/);
     expect(() => parseRules('[{"id":"x","name":"X","category":"chat","hosts":[]}]')).toThrow(/non-empty list/);
     expect(() => parseRules('[{"id":"x","name":"X","category":"chat","hosts":["a.example"],"pathPrefix":"w"}]')).toThrow(/pathPrefix/);
+    for (const host of ["https://a.example", "a.example/x", "*.a.example", "a.example:8080", "a example"]) {
+      expect(() => parseRules(`[{"id":"x","name":"X","category":"chat","hosts":["${host}"]}]`), host).toThrow(/bare host name/);
+    }
+    for (const prefix of ["/tr/", "/a?b", "/a#b"]) {
+      expect(() => parseRules(`[{"id":"x","name":"X","category":"chat","hosts":["a.example"],"pathPrefix":"${prefix}"}]`), prefix).toThrow(/pathPrefix/);
+    }
   });
 });

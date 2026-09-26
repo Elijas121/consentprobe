@@ -34,11 +34,15 @@ export const CATEGORY_HINT: Record<Category, string> = {
   "consent-platform": "Consent management platform loaded. This is expected for a banner and listed only for context.",
 };
 
+/** Analytics that by design stores nothing on the device; the IP address still reaches the provider. */
+const COOKIELESS =
+  "Cookieless measurement service contacted before any consent interaction. It stores nothing on the device by design, but the visitor's IP address reaches the provider; whether consent is needed depends on the setup.";
+
 export const BUILT_IN_RULES: TrackerRule[] = [
   // Analytics
   { id: "google-analytics", name: "Google Analytics", category: "analytics", hosts: ["google-analytics.com", "analytics.google.com", "stats.g.doubleclick.net"] },
   { id: "matomo-cloud", name: "Matomo Cloud", category: "analytics", hosts: ["matomo.cloud"] },
-  { id: "plausible", name: "Plausible (hosted)", category: "analytics", hosts: ["plausible.io"] },
+  { id: "plausible", name: "Plausible (hosted)", category: "analytics", hosts: ["plausible.io"], severity: "warn", hint: COOKIELESS },
   { id: "hotjar", name: "Hotjar", category: "analytics", hosts: ["hotjar.com", "hotjar.io"] },
   { id: "clarity", name: "Microsoft Clarity", category: "analytics", hosts: ["clarity.ms"] },
   { id: "mixpanel", name: "Mixpanel", category: "analytics", hosts: ["mixpanel.com"] },
@@ -46,7 +50,7 @@ export const BUILT_IN_RULES: TrackerRule[] = [
   { id: "fullstory", name: "FullStory", category: "analytics", hosts: ["fullstory.com"] },
   { id: "heap", name: "Heap", category: "analytics", hosts: ["heap.io", "heapanalytics.com"] },
   { id: "amplitude", name: "Amplitude", category: "analytics", hosts: ["amplitude.com"] },
-  { id: "vercel-analytics", name: "Vercel Analytics", category: "analytics", hosts: ["vercel-insights.com", "vitals.vercel-insights.com"] },
+  { id: "vercel-analytics", name: "Vercel Analytics", category: "analytics", hosts: ["vercel-insights.com", "vitals.vercel-insights.com"], severity: "warn", hint: COOKIELESS },
   { id: "adobe-analytics", name: "Adobe Analytics", category: "analytics", hosts: ["omtrdc.net", "2o7.net"] },
   // Tag managers
   { id: "adobe-launch", name: "Adobe Launch (tag manager)", category: "tag-manager", hosts: ["adobedtm.com"] },
@@ -83,7 +87,8 @@ export const BUILT_IN_RULES: TrackerRule[] = [
   { id: "intercom", name: "Intercom", category: "chat", hosts: ["intercom.io", "intercomcdn.com"] },
   { id: "crisp", name: "Crisp", category: "chat", hosts: ["crisp.chat"] },
   { id: "tawk", name: "tawk.to", category: "chat", hosts: ["tawk.to"] },
-  { id: "hubspot-tracking", name: "HubSpot tracking", category: "analytics", hosts: ["track.hubspot.com", "track-eu1.hubspot.com", "hs-analytics.net", "hs-banner.com", "hsadspixel.net"] },
+  { id: "hubspot-tracking", name: "HubSpot tracking", category: "analytics", hosts: ["track.hubspot.com", "track-eu1.hubspot.com", "hs-analytics.net", "hsadspixel.net"] },
+  { id: "hubspot-cookie-banner", name: "HubSpot cookie banner", category: "consent-platform", hosts: ["hs-banner.com"] },
   { id: "hubspot", name: "HubSpot (forms, chat, scripts)", category: "chat", hosts: ["hs-scripts.com", "hsforms.net", "hubspot.com"] },
   { id: "drift", name: "Drift", category: "chat", hosts: ["drift.com", "driftt.com"] },
   { id: "zendesk-widget", name: "Zendesk widget", category: "chat", hosts: ["zdassets.com"] },
@@ -96,7 +101,14 @@ export const BUILT_IN_RULES: TrackerRule[] = [
   { id: "jquery-cdn", name: "jQuery CDN", category: "cdn", hosts: ["code.jquery.com"] },
   { id: "bootstrap-cdn", name: "Bootstrap CDN", category: "cdn", hosts: ["stackpath.bootstrapcdn.com", "maxcdn.bootstrapcdn.com"] },
   { id: "wp-stats", name: "WordPress.com / Jetpack stats", category: "analytics", hosts: ["stats.wp.com", "pixel.wp.com"] },
-  { id: "newrelic", name: "New Relic", category: "analytics", hosts: ["newrelic.com", "nr-data.net"] },
+  {
+    id: "newrelic",
+    name: "New Relic",
+    category: "analytics",
+    hosts: ["newrelic.com", "nr-data.net"],
+    severity: "warn",
+    hint: "Performance monitoring contacted before any consent interaction. The visitor's IP address reaches the provider; check its configuration (session tracking, cookies).",
+  },
   { id: "google-ad-services", name: "Google ad services", category: "advertising", hosts: ["googletagservices.com", "adservice.google.com"] },
   // More embeds and widgets
   { id: "google-maps-embed", name: "Google Maps (embed)", category: "maps", hosts: ["google.com", "www.google.com"], pathPrefix: "/maps" },
@@ -138,6 +150,8 @@ export const TRACKER_COOKIE_PATTERNS: { pattern: RegExp; name: string }[] = [
   { pattern: /^_fbp$|^_fbc$/, name: "Meta Pixel" },
   { pattern: /^_hj/, name: "Hotjar" },
   { pattern: /^_clck$|^_clsk$/, name: "Microsoft Clarity" },
+  { pattern: /^_uet(sid|vid)$/, name: "Microsoft Advertising" },
+  { pattern: /^__hs(tc|sc|src|fp)$|^hubspotutk$/, name: "HubSpot" },
   { pattern: /^_pk_(id|ses|ref|cvar)/, name: "Matomo" },
   { pattern: /^_ttp$|^_tt_/, name: "TikTok" },
   { pattern: /^_pin_unauth$|^_pinterest_/, name: "Pinterest" },

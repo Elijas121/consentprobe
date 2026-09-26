@@ -2,7 +2,7 @@
 
 How well does consentprobe do what it claims? This file records the method, the numbers and the limits. Raw results name real companies and are therefore **not** in this repository.
 
-Date: 2026-09-24/25. Version: 0.1.0.
+Date: 2026-09-24/25. Version: 0.1.0. The blind sample judged by a person is described in its own section below.
 
 ## What was measured
 
@@ -88,11 +88,50 @@ The 71 sites above are small businesses. A later scan of 20 large German sites (
 
 After these fixes the tool recognized the banner on all 17 of the 20 large sites that show one; of the other three, one redirects to a consent wall, one has no banner and one still refuses automated browsers (HTTP 403) and is not measured. A blind sample judged by a person, with small and large sites, is the next step.
 
+## Blind sample judged by a person (2026-09-25)
+
+The samples above were judged by the AI assistant that also tuned the tool. This sample was judged by a person.
+
+**Sites.** 50 sites picked from web search results per category before any scan: 30 small businesses in Germany, Austria and Switzerland, two per industry (bakeries, dentists, physiotherapists, law firms, car workshops, hairdressers, hotels, driving schools, restaurants, electricians, carpenters, opticians, vets, general practitioners) and 20 large German sites (retail, travel, news, portals). Two could not be measured (HTTP 500, and HTTP 403 from bot protection), so 48 sites remain.
+
+**Method.**
+
+1. The tool scanned all sites once. Only the neutral baseline screenshot of each site was copied into a separate folder.
+2. The person judged B, R and A from those screenshots alone, following written rules fixed in advance (for example: "Einstellungen" and "Zum Abo" do not count as reject; a pure cookie notice counts as a banner), without opening the sites or seeing any tool output.
+3. Every disagreement (17 sites) and every agreement (31 sites) was then checked against all screenshots of the site, and where the screenshots did not settle it, against the page structure. This check was done by the AI assistant, and each finding was re-checked by a second, independent check that tried to refute it. All findings held.
+
+### What the check found about the ground truth
+
+Agreement between the person and the tool is not the same as correctness, and disagreement is not always a tool error:
+
+- **The baseline screenshot misses late banners.** On 5 of 48 sites the baseline screenshot shows no banner, although a first-time visitor gets one: on four it rendered after the screenshot (the click screenshots show it), on one it sat blurred behind a location popup. The person was right about the image, the tool was right about the site.
+- **The person's answers on the image** were right for B on 42 of 47, for R on 24 of 34 (plus one "unclear") and for A on 31 of 35. The R errors came mostly from counting other buttons as reject: settings, "save selection" with boxes unticked by default, subscription offers on pay-or-consent walls, and category checkbox labels. Two banners were thin bars at the bottom edge and were overlooked; a full-page consent wall and a pure cookie notice were not counted as banners, and on one site a banner was marked where there is none.
+- **Both were wrong together on four sites.** On two of them both answered "reject: yes", although the first layer offers only "save selection" and "accept all" (the tool because it took a category checkbox label for a control, see below); on the other two both missed a full-page consent wall and a cookie notice as "banner".
+
+### Results
+
+Against the checked ground truth for each site:
+
+| Run | B | R | A |
+|---|---|---|---|
+| Blind first run (before any fix from this sample) | 47/47 | 36/39 | 36/39 |
+| After the fixes, same sites (no longer blind) | 46/46 | 38/38 | 37/38 |
+
+Not counted: one site where the tool reported "search incomplete" and made no claim, and one site with a consent wall on a separate page, where the tool reports the wall but by design does not click (R and A). In the rescan after the fixes, one large site refused the browser with HTTP 403 after the many visits of that day; with the same code it had been measured correctly in three earlier runs.
+
+**Errors of the blind run:**
+
+- **Three category names taken for a reject control.** On three sites the tool reported a reject control that was only the label of a category checkbox ("Essential", "Notwendige Cookies", "Erforderliche Cookies"). The click on it failed each time, so no measurement was based on a wrong click. But the report counted a reject control as found, and so did not warn that two of these sites have no reject control on the first layer. This contradicts the earlier statement that every error was "not found"; it is fixed, and both search paths are now tested against category lists.
+- **Two accept labels not recognized:** "Accept everything" and "I Accept All". Fixed.
+- **One remaining disagreement:** a thin notice ("only technically necessary cookies are used") with a single "OK" button. The rules count "OK" in a cookie banner as accept; the tool reports such a notice as "not automatable" and does not click, because there is nothing to consent to.
+
+**Clicks.** Blind run: 57 completed clicks, every one on a general reject or accept control. Five further click attempts failed: the three category labels above, and two real controls hidden behind a location popup, which the tool reported as blocked. After the fixes: 58 completed clicks, all on general controls; the two blocked ones remain and are reported as such.
+
 ## Limits
 
-- **One judge.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. Sample 3 was blind and untouched by tuning, but an outside reviewer is still missing.
+- **Few judges.** The ground truth of the 71-site samples was judged by the same AI assistant that tuned the heuristics. The 48-site sample was judged blind by one person, but its disagreements were settled by the AI assistant (with an independent second check). A second person judging independently is still missing.
 - **Small samples.** 71 small-business sites plus 20 large sites, almost all German-speaking. Other languages and exotic consent tools are underrepresented.
-- **One snapshot.** A banner that appears late can be missing from the baseline screenshot, as happened once.
+- **One snapshot.** The baseline screenshot is taken after a fixed wait. A banner that appears later is missing from it (5 of 48 sites in the person-judged sample); the click screenshots show it. Judge ground truth from all screenshots, not from the baseline alone.
 - **First layer only.** Settings dialogs behind "Einstellungen" are not tested.
 - **Location.** Scans ran from a single EU IP address. Sites that show banners only in some countries may behave differently elsewhere.
 

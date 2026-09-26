@@ -7,35 +7,63 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  verify:
+    # Everything that runs third-party code happens here, without the publishing token.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Tag must match package.json version
+          fetch-depth: 0
+      - name: Tag must match package.json and sit on main
         run: |
           pkg="$(node -p "require('./package.json').version")"
-          if [ "${GITHUB_REF_NAME#v}" != "$pkg" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+          code="$(sed -n 's/^export const VERSION = "\(.*\)";$/\1/p' src/version.ts)"
+          if [ "${GITHUB_REF_NAME#v}" != "$pkg" ] || [ "$pkg" != "$code" ]; then
+            echo "Tag $GITHUB_REF_NAME, package.json $pkg and src/version.ts $code must match" >&2
             exit 1
           fi
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "The tagged commit is not on main" >&2; exit 1; }
       # pnpm 11 needs Node 22+ (node:sqlite).
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm typecheck
       - run: pnpm test
+      # The tarball is built here, so the job that holds the publishing token runs no third-party code.
       - run: pnpm build
-      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10.
-      - run: npm install -g npm@latest
-      - run: npm --version
-      - run: npm publish --provenance --access public
+      - run: mkdir -p pkg && npm pack --ignore-scripts --pack-destination pkg
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package
+          path: pkg/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Create the "npm" environment in the repository settings to require a manual approval.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10. Pinned, not "latest".
+      - run: npm install -g npm@11.6.0
+      # Only the tarball the verify job tested and packed is published; nothing is installed or built here.
+      - run: npm publish ./*.tgz --provenance --access public --ignore-scripts

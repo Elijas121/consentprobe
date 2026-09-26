@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, constants, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { normalizeUrlInput, parseMs, parseRules } from "./input.js";
-import { formatMarkdown, formatText } from "./report.js";
+import { formatJson, formatMarkdown, formatText, plain } from "./report.js";
 import { scan } from "./scan.js";
 import { VERSION } from "./version.js";
 import type { ScanOptions, Severity } from "./types.js";
@@ -24,10 +26,13 @@ Options:
   --banner-wait <ms>        How long to wait for a banner to appear (default: 4000)
   --screenshots <dir>       Save evidence screenshots before/after each banner click
   --first-party <domain>    Extra domain of the site operator, e.g. its asset CDN (repeatable)
-  --imprint <auto|always|never>  German rules: auto = German-language or .de/.at/.ch sites;
+  --imprint <auto|always|never>  German rules: auto = German page language, a .de/.at/.li domain,
+                            or a .ch domain without another page language;
                             always = force them (imprint check, missing privacy link is an error);
                             never = no imprint check (default: auto)
   --rules <file>            JSON file with extra tracker rules
+  --install-browser         Download the Chromium version this consentprobe was tested with, then exit
+                            (add --with-deps on Linux to install system libraries too; needs root)
   -h, --help                Show this help
   -v, --version             Show the version
 
@@ -36,8 +41,25 @@ Technical findings only; this is not legal advice.`;
 
 /** Report a usage or runtime error. The exit code is set, not forced, so piped output is not cut off. */
 function fail(message: string): void {
-  process.stderr.write(`consentprobe: ${message}\n`);
+  // Error texts can quote the page (a thrown script error); keep them to one printable line.
+  process.stderr.write(`consentprobe: ${plain(message)}\n`);
   process.exitCode = 2;
+}
+
+/**
+ * Run the installer of the Playwright version bundled with consentprobe, so the browser matches it.
+ * A plain "npx playwright install" may fetch a newer Playwright whose browser build does not fit.
+ */
+async function installBrowser(withDeps: boolean): Promise<void> {
+  const pkg = createRequire(import.meta.url).resolve("playwright/package.json");
+  const cli = pkg.replace(/package\.json$/, "cli.js");
+  const args = [cli, "install", ...(withDeps ? ["--with-deps"] : []), "chromium"];
+  const code = await new Promise<number>((resolve) => {
+    const child = spawn(process.execPath, args, { stdio: "inherit" });
+    child.on("error", () => resolve(2));
+    child.on("exit", (c) => resolve(c ?? 2));
+  });
+  if (code !== 0) return fail("the browser download failed; see the output above.");
 }
 
 async function main(): Promise<void> {
@@ -58,6 +80,8 @@ async function main(): Promise<void> {
         screenshots: { type: "string" },
         imprint: { type: "string", default: "auto" },
         "banner-wait": { type: "string" },
+        "install-browser": { type: "boolean" },
+        "with-deps": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -69,8 +93,10 @@ async function main(): Promise<void> {
 
   if (values.help) return void process.stdout.write(`${HELP}\n`);
   if (values.version) return void process.stdout.write(`${VERSION}\n`);
+  if (values["install-browser"]) return installBrowser(Boolean(values["with-deps"]));
   const [input] = positionals;
   if (!input) return fail("missing <url>. Try --help.");
+  if (positionals.length > 1) return fail(`one URL at a time, got ${positionals.length}: ${positionals.join(" ")}. Use scripts/scan-list.sh for lists.`);
   let url: string;
   try {
     url = normalizeUrlInput(input);
@@ -110,6 +136,20 @@ async function main(): Promise<void> {
     }
   }
 
+  // Check the output locations before the (slow) scan, so a typo does not throw away its result.
+  try {
+    if (values.out) {
+      await mkdir(dirname(values.out), { recursive: true });
+      await access(dirname(values.out), constants.W_OK);
+    }
+    if (values.screenshots) {
+      await mkdir(values.screenshots, { recursive: true });
+      await access(values.screenshots, constants.W_OK);
+    }
+  } catch (err) {
+    return fail(`cannot write to the output location: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   let result;
   try {
     result = await scan(url, options);
@@ -117,7 +157,7 @@ async function main(): Promise<void> {
     return fail(err instanceof Error ? err.message : String(err));
   }
 
-  const output = format === "json" ? JSON.stringify(result, null, 2) : format === "md" ? formatMarkdown(result) : formatText(result);
+  const output = format === "json" ? formatJson(result) : format === "md" ? formatMarkdown(result) : formatText(result);
   if (values.out) {
     try {
       await mkdir(dirname(values.out), { recursive: true });

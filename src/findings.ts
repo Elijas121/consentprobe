@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { isThirdParty, matchRule } from "./classify.js";
+import { isThirdParty, matchRule, registrableDomain, sharedOperator } from "./classify.js";
+import type { RawRequest } from "./record.js";
 import {
   BUILT_IN_RULES,
   CATEGORY_HINT,
@@ -33,7 +34,13 @@ export function findingsForRequests(
   const byRule = new Map<string, { rule: TrackerRule; urls: string[]; reqs: RequestRecord[] }>();
   const unclassified = new Map<string, number>();
 
+  const ownServices = new Map<string, Set<string>>();
+
   for (const req of requests) {
+    if (req.sameOperator) {
+      const rule = matchRule(new URL(req.url), rules);
+      if (rule) ownServices.set(req.sameOperator, (ownServices.get(req.sameOperator) ?? new Set()).add(rule.name));
+    }
     if (!req.thirdParty) continue;
     const rule = matchRule(new URL(req.url), rules);
     if (rule) {
@@ -46,7 +53,20 @@ export function findingsForRequests(
     }
   }
 
-  for (const { rule, reqs } of byRule.values()) {
+  // Hosts that are reported under a rule of their own, e.g. the frame of a video player or a map.
+  // Font and CDN rules do not count: they are the requests that may be dropped below.
+  const reportedHosts = new Set(
+    [...byRule.values()].filter((e) => e.rule.category !== "fonts" && e.rule.category !== "cdn").flatMap((e) => e.reqs.map((r) => r.host)),
+  );
+  for (const { rule, reqs: all } of byRule.values()) {
+    // Fonts or CDN files that an embedded third-party frame (a video player, a map, a captcha) loads for
+    // itself are not the site's own fonts: the site cannot self-host them. They are dropped only when the
+    // embed itself is reported; an embed without a rule of its own would otherwise hide the transfer.
+    const reqs =
+      rule.category === "fonts" || rule.category === "cdn"
+        ? all.filter((r) => !r.embeddedIn || !reportedHosts.has(r.embeddedIn))
+        : all;
+    if (reqs.length === 0) continue;
     // Google's Consent Mode "denied" pings are judged like after a reject: a separate, disputed warning.
     const pings = reqs.filter(isDeniedPing);
     const other = reqs.filter((r) => !isDeniedPing(r));
@@ -58,8 +78,8 @@ export function findingsForRequests(
           : "";
       findings.push({
         id: `third-party-before-consent:${rule.id}`,
-        severity: CATEGORY_SEVERITY[rule.category],
-        message: `${rule.name} (${rule.category}): ${other.length} request(s) before any consent interaction. ${CATEGORY_HINT[rule.category]}${note}`,
+        severity: rule.severity ?? CATEGORY_SEVERITY[rule.category],
+        message: `${rule.name} (${rule.category}): ${other.length} request(s) before any consent interaction. ${rule.hint ?? CATEGORY_HINT[rule.category]}${note}${embeddedNote(other)}`,
         evidence: uniq(other.map((r) => (r.consentSignal ? `${r.url} [gcs=${r.consentSignal}]` : r.url))).slice(0, MAX_EVIDENCE),
       });
     }
@@ -82,6 +102,14 @@ export function findingsForRequests(
         .sort((a, b) => b[1] - a[1])
         .slice(0, MAX_EVIDENCE * 2)
         .map(([host, n]) => `${host} (${n})`),
+    });
+  }
+  for (const [operator, names] of ownServices) {
+    findings.push({
+      id: "same-operator-services",
+      severity: "info",
+      message: `Services that belong to the site's own operator (${operator}) were contacted: ${[...names].join(", ")}. They are not counted as third parties, but measurement or advertising can still need consent.`,
+      evidence: [...names],
     });
   }
   return findings;
@@ -170,6 +198,12 @@ export function findingsForLegal(
   legal: { imprint: LegalLink; privacy: LegalLink },
   imprintMode: ImprintMode = "check",
   germanRules = true,
+  /**
+   * The domain (.de, .at, .ch, .li) or the user (--imprint always) says the operator is in a country
+   * with an imprint duty. A German-language page alone does not: consentprobe asks for German
+   * content, and many international sites serve it, so their missing imprint is only a warning.
+   */
+  imprintDutyLikely = true,
 ): Finding[] {
   const findings: Finding[] = [];
   const checks = [
@@ -188,7 +222,11 @@ export function findingsForLegal(
 
   for (const { key, label, link } of checks) {
     if (key === "imprint" && !checkImprint) continue;
-    const hard: Severity = key === "privacy" && !germanRules ? "warn" : "error";
+    const hard: Severity = key === "privacy" ? (germanRules ? "error" : "warn") : imprintDutyLikely ? "error" : "warn";
+    const dutyNote =
+      key === "imprint" && !imprintDutyLikely
+        ? " The page is in German, but its domain does not show where the operator is established; an imprint is required for operators in Germany, Austria or Switzerland."
+        : "";
     if (!link.found && link.candidate) {
       findings.push({
         id: `${key}-link-uncertain`,
@@ -204,7 +242,7 @@ export function findingsForLegal(
       findings.push({
         id: `${key}-link-missing`,
         severity: hard,
-        message: `No link to the ${label} found on this page.`,
+        message: `No link to the ${label} found on this page.${dutyNote}`,
         evidence: [],
       });
       continue;
@@ -238,13 +276,27 @@ export function findingsForLegal(
   return findings;
 }
 
+/** Host of the frame that made a request, when that frame belongs to a third party (an embed). */
+function embeddingHost(frameUrl: string | undefined, pageHost: string, firstParty: string[]): string | undefined {
+  if (!frameUrl) return undefined;
+  try {
+    const f = new URL(frameUrl);
+    if (f.protocol !== "http:" && f.protocol !== "https:") return undefined;
+    return isThirdParty(f.hostname, pageHost, firstParty) && registrableDomain(f.hostname) !== registrableDomain(pageHost) ? f.hostname : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function classifyRequests(
-  raw: { url: string; resourceType: string }[],
+  raw: RawRequest[],
   pageHost: string,
   firstParty: string[] = [],
 ): RequestRecord[] {
   const out: RequestRecord[] = [];
   for (const r of raw) {
+    // Stopped by the browser itself (CSP, mixed content): nothing was sent.
+    if (r.blocked) continue;
     let u: URL;
     try {
       u = new URL(r.url);
@@ -252,12 +304,17 @@ export function classifyRequests(
       continue;
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-    const gcs = u.searchParams.get("gcs");
+    // Floodlight and other DoubleClick endpoints carry parameters in the path (";gcs=G100;...").
+    const gcs = u.searchParams.get("gcs") ?? u.pathname.match(/;gcs=(G1[01]{2})(;|$)/)?.[1] ?? null;
+    const operator = sharedOperator(u.hostname, pageHost);
+    const embeddedIn = embeddingHost(r.frameUrl, pageHost, firstParty);
     out.push({
       url: `${u.origin}${u.pathname}`,
       host: u.hostname,
       resourceType: r.resourceType,
       thirdParty: isThirdParty(u.hostname, pageHost, firstParty),
+      ...(operator ? { sameOperator: operator } : {}),
+      ...(embeddedIn ? { embeddedIn } : {}),
       ...(gcs && /^G1[01]{2}$/.test(gcs) ? { consentSignal: gcs } : {}),
     });
   }
@@ -288,6 +345,13 @@ export function describeConsentSignal(gcs: string): string {
 }
 
 const isDeniedPing = (r: RequestRecord) => r.consentSignal === "G100";
+
+/** " 3 of them come from inside an embedded frame (www.youtube-nocookie.com)." or nothing. */
+function embeddedNote(reqs: RequestRecord[]): string {
+  const embedded = reqs.filter((r) => r.embeddedIn);
+  if (embedded.length === 0) return "";
+  return ` ${embedded.length} of them come from inside an embedded frame (${uniq(embedded.map((r) => r.embeddedIn ?? "")).slice(0, 3).join(", ")}), not from the page itself.`;
+}
 
 /**
  * Categories that should stay quiet once the visitor has rejected. Fonts, CDNs and
@@ -340,13 +404,21 @@ export function findingsForConsent(
         id: "no-consent-banner-detected",
         severity: "info",
         message:
-          "No consent banner was recognized, so reject and accept were not tested. If the page has one, it was not found automatically.",
+          "No consent banner was recognized, so reject and accept were not tested. If the page has one, it was not found automatically. Consent tools can also be set to show the banner only in some countries, so the scan location matters.",
         evidence: [],
       },
     ];
   }
 
-  if (banner.acceptFound && !banner.rejectFound) {
+  if (banner.acceptFound && !banner.rejectFound && banner.rejectSearchIncomplete) {
+    findings.push({
+      id: "reject-search-incomplete",
+      severity: "info",
+      message:
+        "An accept control was found, but parts of the page did not respond while consentprobe searched for a reject control. Whether the first layer has one is unknown; check the screenshots.",
+      evidence: [],
+    });
+  } else if (banner.acceptFound && !banner.rejectFound) {
     findings.push({
       id: "no-reject-control-on-first-layer",
       severity: "warn",
@@ -370,7 +442,14 @@ export function findingsForConsent(
   }
 
   for (const session of [reject, accept]) {
-    if (session?.error) {
+    if (session?.error?.startsWith("visit failed")) {
+      findings.push({
+        id: `consent-${session.action}-visit-failed`,
+        severity: "info",
+        message: `The ${session.action} visit could not be completed (${session.error}), so ${session.action} was not tested.`,
+        evidence: [],
+      });
+    } else if (session?.error) {
       findings.push({
         id: `consent-${session.action}-click-failed`,
         severity: "info",
@@ -397,10 +476,11 @@ export function findingsForConsent(
       if (other.length > 0) {
         findings.push({
           id: `third-party-after-reject:${rule.id}`,
-          severity: AFTER_REJECT[rule.category] ?? "warn",
+          severity: rule.severity ?? AFTER_REJECT[rule.category] ?? "warn",
           message:
             `${rule.name} (${rule.category}): ${other.length} request(s) after the reject control was clicked.` +
-            (granted.length > 0 ? ` ${granted.length} of them signal consent as granted (${uniq(granted.map((r) => r.consentSignal ?? "")).join(", ")}).` : ""),
+            (granted.length > 0 ? ` ${granted.length} of them signal consent as granted (${uniq(granted.map((r) => r.consentSignal ?? "")).join(", ")}).` : "") +
+            embeddedNote(other),
           evidence: uniq(other.map((r) => (r.consentSignal ? `${r.url} [gcs=${r.consentSignal}]` : r.url))).slice(0, MAX_EVIDENCE),
         });
       }
