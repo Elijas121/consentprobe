@@ -11,13 +11,13 @@ Thanks for helping. consentprobe measures what websites do with consent, and a w
 
 ```bash
 pnpm install
-pnpm exec playwright install chromium
+node dist/cli.js --install-browser
 pnpm typecheck
 pnpm test      # unit tests and real-browser tests against local fixtures
 pnpm build
 ```
 
-Building needs Node 22+ and pnpm 11; the CLI itself runs on Node 20+.
+Node 22+ and pnpm 11. `pnpm install` also builds `dist/`.
 
 ## What a pull request needs
 
