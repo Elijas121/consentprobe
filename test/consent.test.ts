@@ -235,6 +235,15 @@ describe("consent click test (real browser)", () => {
     }
   });
 
+  it("finds plain clickable controls inside an open shadow root", async () => {
+    const r = await scan(`${fx.origin}/banner-shadow-plain-controls`, opts());
+    expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });
+    expect(r.consent?.reject?.control?.label).toBe("Alle ablehnen");
+    expect(r.consent?.accept?.control?.label).toBe("Alle akzeptieren");
+    expect(r.consent?.reject?.clicked).toBe(true);
+    expect(r.consent?.accept?.clicked).toBe(true);
+  }, 30000);
+
   it("never takes a video content blocker in the page for the banner", async () => {
     const r = await scan(`${fx.origin}/video-placeholder-late-banner`, opts());
     expect(r.consent?.banner).toMatchObject({ detected: true, rejectFound: true, acceptFound: true });

@@ -289,6 +289,9 @@ const PLAIN_MARK = "data-consentprobe-control";
  */
 function markPlainControls(args: { source: string; flags: string; mark: string; max: number }): number {
   const candidate = new RegExp(args.source, args.flags);
+  // Walk out of open shadow roots too: a web-component banner's content is not part of the host and
+  // not reachable through a "body *" query. Same walk as isOverlayElement.
+  const up = (n: Element): Element | null => n.parentElement ?? ((n.getRootNode() as { host?: Element }).host ?? null);
   // A fixed wrapper around the whole page (smooth-scroll and app shells) is the page, not an overlay:
   // it holds <main>, many links, a visible text field of a form, or most of the page's elements.
   const pageShell = (x: Element): boolean => {
@@ -300,7 +303,7 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
     return field || (all >= 40 && x.querySelectorAll("*").length >= all * 0.6);
   };
   const inOverlay = (el: Element): boolean => {
-    for (let n: Element | null = el; n; n = n.parentElement) {
+    for (let n: Element | null = el; n; n = up(n)) {
       // A content blocker ("load this video / map") is no banner, also when it is a fixed lightbox.
       if (/blocker|blocked|placeholder|embed|video|youtube|vimeo|opt-?out|\bmaps?\b/i.test(`${n.id} ${n.getAttribute("class") ?? ""}`)) return false;
       const position = getComputedStyle(n).position;
@@ -315,7 +318,16 @@ function markPlainControls(args: { source: string; flags: string; mark: string; 
     return false;
   };
   let marked = 0;
-  for (const el of Array.from(document.querySelectorAll("body *"))) {
+  // The page's own elements plus the content of every open shadow root, like cookieOverlayVisible.
+  const all: Element[] = [];
+  const walk = (root: Element | ShadowRoot) => {
+    for (const e of Array.from(root.querySelectorAll("*"))) {
+      all.push(e);
+      if (e.shadowRoot) walk(e.shadowRoot);
+    }
+  };
+  if (document.body) walk(document.body);
+  for (const el of all) {
     const role = el.getAttribute("role");
     if (el.tagName === "BUTTON" || role === "button" || role === "link" || (el.tagName === "A" && el.hasAttribute("href"))) continue;
     // Cheap text filter first; style and layout queries only for the few elements that pass.

@@ -187,6 +187,16 @@ export async function startFixtures(): Promise<Fixtures> {
       case "/banner-plain-controls":
         // Controls built from links without href: no button or link role (seen on a large comparison site).
         return html(200, page(`<h1>Plain controls</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"><p>Mit einem Klick auf „Geht klar“ erlauben Sie Cookies für Statistik und Werbung. Mit „Nur notwendige Cookies“ speichern wir nur technisch notwendige Cookies.</p><a class="rej">Nur notwendige Cookies</a> <a class="acc">Geht klar</a></div><script>var banner=document.getElementById('banner');function load(){var s=document.createElement('script');s.src='${thirdOrigin}/analytics.js';document.head.appendChild(s);}document.querySelector('.acc').addEventListener('click',function(){document.cookie='_ga=GA1.2.1; path=/';load();banner.remove();});document.querySelector('.rej').addEventListener('click',function(){banner.remove();});</script>`));
+      case "/banner-shadow-plain-controls":
+        // Plain clickable controls inside an open shadow root: no button or link role in the document,
+        // and not reachable through a "body *" query (seen in banners built as web components).
+        return html(200, page(`<h1>Shadow plain controls</h1>${FOOTER}<div id="banner" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:1rem"></div><script>
+          var host = document.getElementById('banner');
+          var root = host.attachShadow({ mode: 'open' });
+          root.innerHTML = '<p>Wir verwenden Cookies.</p><div class="rej" style="cursor:pointer">Alle ablehnen</div> <div class="acc" style="cursor:pointer">Alle akzeptieren</div>';
+          root.querySelector('.rej').addEventListener('click', function(){ host.remove(); });
+          root.querySelector('.acc').addEventListener('click', function(){ document.cookie='_ga=GA1.2.1; path=/'; host.remove(); });
+        </script>`));
       case "/banner-category-list":
       case "/banner-category-list-no-reject": {
         // A consent dialog that lists categories on the first layer: a checkbox label "Essential", an
