@@ -10,7 +10,7 @@ inputs:
     description: URL to scan
     required: true
   fail-on:
-    description: "Fail the job at this severity or above: error, warn or never (never also ignores a page that cannot be measured)"
+    description: "Fail the job at this severity or above: error, warn or never (never also ignores a page that cannot be measured, but not a usage error)"
     default: error
   imprint:
     description: "Imprint check: auto, always or never"
@@ -64,6 +64,7 @@ runs:
           # An indented code block cannot be closed by the quoted text.
           { echo "### consentprobe could not measure the page"; echo; sed 's/^/    /' "$err"; } >> "$GITHUB_STEP_SUMMARY"
         fi
-        # fail-on: never means never: also a page that cannot be measured does not fail the job.
-        if [ "$CP_FAIL_ON" = "never" ]; then exit 0; fi
+        # fail-on: never means never for the page: findings (1) and a page that cannot be measured (2)
+        # do not fail the job. A usage or setup error (3), e.g. a mistyped input, always does.
+        if [ "$CP_FAIL_ON" = "never" ] && [ "$code" -le 2 ]; then exit 0; fi
         exit $code

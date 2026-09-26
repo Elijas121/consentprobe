@@ -89,19 +89,27 @@ export class PageNotMeasurableError extends Error {
   }
 }
 
+/** A problem the user has to fix (a wrong URL, no browser, missing libraries), not one of the page. */
+export class SetupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SetupError";
+  }
+}
+
 /** Turn Playwright's long "browser missing" error into one actionable line. */
 export function explainLaunchError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   if (/distribution '?chrome'? is not found|chrome.*not found at/i.test(message)) {
-    return new Error("Google Chrome is not installed. Install it, or leave out --browser chrome to use the bundled Chromium (install it once with: consentprobe --install-browser).");
+    return new SetupError("Google Chrome is not installed. Install it, or leave out --browser chrome to use the bundled Chromium (install it once with: consentprobe --install-browser).");
   }
   if (/missing dependencies|shared libraries|install-deps|--with-deps/i.test(message)) {
-    return new Error("Chromium could not start because system libraries are missing. On Linux run once, with root rights: consentprobe --install-browser --with-deps");
+    return new SetupError("Chromium could not start because system libraries are missing. On Linux run once, with root rights: consentprobe --install-browser --with-deps");
   }
   if (/executable doesn't exist/i.test(message)) {
-    return new Error("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
+    return new SetupError("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
   }
-  return err instanceof Error ? err : new Error(message);
+  return new SetupError(message);
 }
 
 /** Statuses that say "try again later", not "this page does not exist". */
@@ -357,10 +365,10 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new Error(`"${rawUrl}" is not a valid URL. Include the scheme, e.g. https://example.com.`);
+    throw new SetupError(`"${rawUrl}" is not a valid URL. Include the scheme, e.g. https://example.com.`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`Only http and https URLs can be scanned, got "${url.protocol}".`);
+    throw new SetupError(`Only http and https URLs can be scanned, got "${url.protocol}".`);
   }
   // Credentials in the URL (a password-protected test site) are used for the visit, never reported.
   const decode = (s: string) => {

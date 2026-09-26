@@ -107,7 +107,7 @@ node dist/cli.js example.de
 | `--rules <file>` | JSON file with extra tracker rules |
 | `--install-browser [--with-deps]` | Download the Chromium build of the bundled Playwright, then exit |
 
-Exit codes: `0` passed, `1` findings at or above `--fail-on`, `2` usage error or page not measurable (bot protection, login wall, error page).
+Exit codes: `0` passed, `1` findings at or above `--fail-on`, `2` page not measurable (bot protection, login wall, error page, timeout), `3` usage or setup error (wrong option, no browser installed). In the GitHub Action, `fail-on: never` ignores `1` and `2`, never `3`.
 
 ### Extra tracker rules
 

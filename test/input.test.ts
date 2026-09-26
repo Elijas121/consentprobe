@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import { normalizeUrlInput, parseMs, parseRules } from "../src/input.js";
 
 describe("URL input", () => {
@@ -62,4 +63,14 @@ describe("--rules files", () => {
       expect(() => parseRules(`[{"id":"x","name":"X","category":"chat","hosts":["a.example"],"pathPrefix":"${prefix}"}]`), prefix).toThrow(/pathPrefix/);
     }
   });
+});
+
+describe("exit codes of the built CLI", () => {
+  const run = (...args: string[]) => spawnSync(process.execPath, ["dist/cli.js", ...args], { encoding: "utf8", timeout: 60000 }).status;
+  it("uses 3 for a usage error and 2 for a page that cannot be measured", () => {
+    expect(run("https://example.com", "--format", "pdf")).toBe(3);
+    expect(run("a.example", "b.example")).toBe(3);
+    // Nothing listens on port 9: the page cannot be loaded, which is the site's side, not a usage error.
+    expect(run("http://127.0.0.1:9/", "--no-click-test", "--timeout", "5000")).toBe(2);
+  }, 90000);
 });

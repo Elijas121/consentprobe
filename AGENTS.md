@@ -26,7 +26,7 @@ Prior art and the tracker-data license decisions: `docs/RESEARCH.md`. How accura
 
 ```
 src/
-  cli.ts        argument parsing, exit codes (0 ok, 1 findings, 2 error)
+  cli.ts        argument parsing, exit codes (0 ok, 1 findings, 2 page not measurable, 3 usage or setup error)
   scan.ts       orchestration: baseline + reject + accept visits in parallel; PageNotMeasurableError
   consent.ts    banner detection (CMP selectors + strict whole-label text match + overlay check), clicking
   navigate.ts   navigation (HTML first, bounded wait for the rest), one-line navigation errors, consent-wall redirects

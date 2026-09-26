@@ -79,6 +79,6 @@ jobs:
           code=$?
           set -e
           node -e "const r=require('./report.json'); if (!r.tool.browser || !r.finalUrl) process.exit(1)"
-          # Exit codes: 0 = passed, 1 = findings at or above --fail-on.
+          # Exit codes: 0 = passed, 1 = findings at or above --fail-on, 2 = page not measurable, 3 = usage error.
           [ "$code" -le 1 ]
-          npx consentprobe a.example b.example && exit 1 || [ $? -eq 2 ]
+          npx consentprobe a.example b.example && exit 1 || [ $? -eq 3 ]
