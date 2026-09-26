@@ -283,6 +283,29 @@ describe("request classification details", () => {
   });
 });
 
+describe("report safety", () => {
+  it("keeps page-controlled text on one printable line in text and Markdown reports", () => {
+    const evil = "Alle\nablehnen\u001b[31m\u202Eevil\r::error::x";
+    const r = {
+      tool: { name: "consentprobe", version: "0.0.0" },
+      url: "https://e.de/",
+      finalUrl: "https://e.de/\nfake",
+      scannedAt: "2026-01-01T00:00:00.000Z",
+      phase: "before-consent",
+      requests: [],
+      cookies: [],
+      legal: { imprint: { found: true }, privacy: { found: true } },
+      findings: [{ id: "x", severity: "warn", message: evil, evidence: [evil] }],
+      summary: { error: 0, warn: 1, info: 0, thirdPartyHosts: 0 },
+    } as unknown as ScanResult;
+    for (const out of [formatText(r), formatMarkdown(r)]) {
+      expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u202e]/);
+      expect(out.split("\n").some((l) => l.startsWith("::error::"))).toBe(false);
+      expect(out.split("\n").some((l) => l.trim() === "fake")).toBe(false);
+    }
+  });
+});
+
 describe("bot-challenge pages", () => {
   const page = { url: "https://example.com/", title: "Example", markers: 0, textLength: 500, links: 5 };
   it("recognizes challenge pages by URL, title or marker, only when the page is small", () => {
@@ -363,7 +386,9 @@ describe("report and errors", () => {
   });
   it("explains a missing browser in one actionable line", () => {
     const err = explainLaunchError(new Error("browserType.launch: Executable doesn't exist at /x. Please run: npx playwright install"));
-    expect(err.message).toBe("No browser found. Install one with: npx playwright install chromium (or use --browser chrome).");
+    expect(err.message).toBe("The bundled Chromium is not installed yet. Install it once with: consentprobe --install-browser");
+    expect(explainLaunchError(new Error("browserType.launch: Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome")).message).toMatch(/Google Chrome is not installed/);
+    expect(explainLaunchError(new Error("browserType.launch: Host system is missing dependencies to run browsers.")).message).toMatch(/--with-deps/);
     expect(explainLaunchError(new Error("boom")).message).toBe("boom");
   });
 });

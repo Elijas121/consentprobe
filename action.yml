@@ -1,5 +1,5 @@
 name: consentprobe
-description: Measure what a website does before and after the cookie banner and fail the job on findings.
+description: Measure what a website does before and after the cookie banner and fail the job on findings. Sets up Node 22 and pnpm for the rest of the job.
 author: Elias Delil
 branding:
   icon: shield
@@ -10,7 +10,7 @@ inputs:
     description: URL to scan
     required: true
   fail-on:
-    description: "Fail the job at this severity or above: error, warn or never"
+    description: "Fail the job at this severity or above: error, warn or never (never also ignores a page that cannot be measured)"
     default: error
   imprint:
     description: "Imprint check: auto, always or never"
@@ -53,10 +53,17 @@ runs:
         node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}" 2> "$err"
         code=$?
         set -e
-        cat "$err" >&2
+        # The error text can quote the scanned page: never let it act as a workflow command.
+        token="consentprobe-$RANDOM$RANDOM$RANDOM"
+        echo "::stop-commands::$token"
+        cat "$err"
+        echo "::$token::"
         if [ -f "$CP_REPORT" ]; then
           cat "$CP_REPORT" >> "$GITHUB_STEP_SUMMARY"
         elif [ -s "$err" ]; then
-          { echo "### consentprobe could not measure the page"; echo; echo '```'; cat "$err"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # An indented code block cannot be closed by the quoted text.
+          { echo "### consentprobe could not measure the page"; echo; sed 's/^/    /' "$err"; } >> "$GITHUB_STEP_SUMMARY"
         fi
+        # fail-on: never means never: also a page that cannot be measured does not fail the job.
+        if [ "$CP_FAIL_ON" = "never" ]; then exit 0; fi
         exit $code

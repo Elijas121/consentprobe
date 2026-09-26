@@ -132,7 +132,8 @@ export interface ScanOptions {
 }
 
 export interface ScanResult {
-  tool: { name: "consentprobe"; version: string };
+  /** Tool, browser and Playwright versions, so a result can be reproduced. */
+  tool: { name: "consentprobe"; version: string; browser?: string; playwright?: string };
   url: string;
   finalUrl: string;
   scannedAt: string;

@@ -12,4 +12,8 @@ Do not post scan results, screenshots or URLs of websites you do not own, neithe
 
 ## Scope
 
-consentprobe runs a real browser against the URL you give it and executes that site's scripts in an isolated browser context. Scan only sites you own or are authorized to test, and run it in an environment where visiting that site is acceptable.
+consentprobe runs a real browser against the URL you give it and executes that site's scripts. Each visit gets a fresh browser context (no shared cookies or storage), but that is not a security boundary: Playwright starts Chromium without its OS sandbox (`--no-sandbox`, its default so it works in containers and CI). Treat a scan like opening the site in a browser you do not otherwise use, and scan untrusted sites in a disposable environment such as a container or a CI runner.
+
+consentprobe never requests hosts on the machine or the local network (localhost, private and link-local addresses) on behalf of a page, for example through a legal link, unless the scanned page itself is local.
+
+Scan only sites you own or are authorized to test.

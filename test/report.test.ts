@@ -25,12 +25,15 @@ describe("markdown report escaping", () => {
     };
 
     const md = formatMarkdown(r);
-    expect(md).toContain("- \\[x\\]\\(https://evil\\.example\\) \\!\\[i\\]\\(https://evil\\.example/i\\.png\\) \\`tick\\` \u001B");
-    expect(md).toContain("  - `[x](https://evil.example) ![i](https://evil.example/i.png) 'tick' \u001B`");
+    // The escape character becomes a space: it could recolor a terminal or hide text.
+    expect(md).toContain("- \\[x\\]\\(https://evil\\.example\\) \\!\\[i\\]\\(https://evil\\.example/i\\.png\\) \\`tick\\` ");
+    expect(md).toContain("  - `[x](https://evil.example) ![i](https://evil.example/i.png) 'tick'  `");
+    expect(md).not.toContain("\u001B");
 
     const txt = formatText(r);
-    expect(txt).toContain(`[WARN] ${attack}`);
-    expect(txt).toContain(`        ${attack}`);
+    const shown = attack.replace("\u001B", " ");
+    expect(txt).toContain(`[WARN] ${shown}`);
+    expect(txt).toContain(`        ${shown}`);
   });
 
   it("escapes page-controlled control labels and the URL in the markdown banner line only", () => {

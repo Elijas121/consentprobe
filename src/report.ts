@@ -9,12 +9,23 @@ function sorted(findings: Finding[]): Finding[] {
   return [...findings].sort((a, b) => ORDER.indexOf(a.severity) - ORDER.indexOf(b.severity));
 }
 
+/**
+ * Page-controlled text (labels, URLs, cookie names) must not carry line breaks, terminal escape
+ * sequences or bidi overrides into a report: they could fake lines, recolor a terminal or inject
+ * CI workflow commands.
+ */
+const UNSAFE = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
+
+export function plain(text: string): string {
+  return text.replace(UNSAFE, " ");
+}
+
 function escapeMarkdown(text: string): string {
-  return text.replace(MARKDOWN_SPECIAL, "\\$1");
+  return plain(text).replace(MARKDOWN_SPECIAL, "\\$1");
 }
 
 function codeSpan(text: string): string {
-  return `\`${text.replaceAll("`", "'")}\``;
+  return `\`${plain(text).replaceAll("`", "'")}\``;
 }
 
 function phaseLine(r: ScanResult): string {
@@ -37,16 +48,16 @@ function bannerLine(r: ScanResult, esc: (s: string) => string = (s) => s): strin
 
 export function formatText(r: ScanResult): string {
   const lines: string[] = [
-    `consentprobe ${r.tool.version}  ${r.finalUrl}`,
+    `consentprobe ${r.tool.version}  ${plain(r.finalUrl)}`,
     phaseLine(r),
-    bannerLine(r),
+    bannerLine(r, plain),
     `${r.summary.error} error, ${r.summary.warn} warn, ${r.summary.info} info | before consent: ${r.summary.thirdPartyHosts} third-party host(s), ${r.requests.length} request(s), ${r.cookies.length} cookie(s)`,
     "",
   ];
   if (r.findings.length === 0) lines.push("No findings.");
   for (const f of sorted(r.findings)) {
-    lines.push(`[${f.severity.toUpperCase()}] ${f.message}`);
-    for (const e of f.evidence) lines.push(`        ${e}`);
+    lines.push(`[${f.severity.toUpperCase()}] ${plain(f.message)}`);
+    for (const e of f.evidence) lines.push(`        ${plain(e)}`);
   }
   lines.push("", DISCLAIMER);
   return lines.join("\n");

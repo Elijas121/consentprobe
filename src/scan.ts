@@ -17,7 +17,7 @@ import {
 } from "./findings.js";
 import { findLegalLinks, type RawAnchor } from "./legal.js";
 import { recordRequests, type RawRequest } from "./record.js";
-import { VERSION } from "./version.js";
+import { PLAYWRIGHT_VERSION, VERSION } from "./version.js";
 import type {
   ConsentBanner,
   ConsentSession,
@@ -426,7 +426,7 @@ export async function scan(rawUrl: string, options: ScanOptions = {}): Promise<S
     const count = (s: "error" | "warn" | "info") => findings.filter((f) => f.severity === s).length;
 
     return {
-      tool: { name: "consentprobe", version: VERSION },
+      tool: { name: "consentprobe", version: VERSION, browser: `${options.browser === "chrome" ? "Chrome" : "Chromium"} ${browser.version()}`, playwright: PLAYWRIGHT_VERSION },
       url: url.href,
       finalUrl: withoutQuery(base.finalUrl),
       scannedAt: new Date().toISOString(),
