@@ -36,6 +36,15 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm typecheck
       - run: pnpm test
+      # The tarball is built here, so the job that holds the publishing token runs no third-party code.
+      - run: pnpm build
+      - run: mkdir -p pkg && npm pack --ignore-scripts --pack-destination pkg
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package
+          path: pkg/*.tgz
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
     needs: verify
@@ -47,17 +56,14 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          persist-credentials: false
+          name: package
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - run: corepack enable
-      # Build without running dependency install scripts; nothing here needs a browser.
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm build
       # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships npm 10. Pinned, not "latest".
       - run: npm install -g npm@11.6.0
-      - run: npm publish --provenance --access public --ignore-scripts
+      # Only the tarball the verify job tested and packed is published; nothing is installed or built here.
+      - run: npm publish ./*.tgz --provenance --access public --ignore-scripts
